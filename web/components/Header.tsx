@@ -1,14 +1,21 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount } from "wagmi";
+import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
+import { useAccount, useConnect } from "wagmi";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import { ARC_CHAIN_ID, ARC_EXPLORER_URL } from "@/lib/arcChain";
 
 export function Header() {
   const { address, isConnected } = useAccount();
+  const { error, isError, reset } = useConnect();
+  const { openConnectModal } = useConnectModal();
   const { gatewayBalance, formattedBalance, isLowBalance, isLoading } =
     useGatewayBalance(address);
+
+  const handleRetry = () => {
+    reset();
+    openConnectModal?.();
+  };
 
   return (
     <header className="flex flex-wrap justify-between items-center gap-4 mb-8">
@@ -51,6 +58,20 @@ export function Header() {
           </div>
         </div>
 
+        {isError && error && (
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--danger)]/20 border border-[var(--danger)]/50">
+            <span className="text-sm text-[var(--danger)] flex-1">
+              {error.message}
+            </span>
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="px-3 py-1 text-sm font-medium rounded-md bg-[var(--danger)]/30 hover:bg-[var(--danger)]/50 transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        )}
         <ConnectButton />
       </div>
     </header>
