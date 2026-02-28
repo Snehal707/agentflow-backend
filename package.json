@@ -5,7 +5,7 @@
   "description": "AgentFlow — Autonomous AI agents. Instant payments. Zero gas. Arc Testnet + Circle x402.",
   "main": "dist/index.js",
   "scripts": {
-    "start": "tsx ui/server.ts",
+    "start": "tsx server.ts",
     "setup": "node scripts/setup.js",
     "setup:ps": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "build": "echo \"Skipping compile step (runtime uses tsx server.ts)\"",
