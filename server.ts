@@ -55,6 +55,14 @@ const SYSTEM_PROMPTS = {
     'You are an orchestrator agent. Given a user task and the outputs of research, analyst, and writer agents, summarize what was done and highlight key insights.',
 };
 
+function isTruthy(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+const ENFORCE_WALLET_MATCH = isTruthy(process.env.ENFORCE_WALLET_MATCH);
+
 function normalizePrivateKey(raw?: string): `0x${string}` {
   const value = raw?.trim();
   if (!value) {
@@ -278,9 +286,14 @@ function createGatewayClientForUser(userAddress?: string): GatewayClient {
       throw new Error('userAddress is invalid.');
     }
     const normalized = getAddress(userAddress);
-    if (normalized.toLowerCase() !== client.address.toLowerCase()) {
+    if (normalized.toLowerCase() !== client.address.toLowerCase() && ENFORCE_WALLET_MATCH) {
       throw new Error(
         `Connected wallet ${normalized} does not match backend signer ${client.address}. Configure PRIVATE_KEY to the connected wallet for server-side payments.`,
+      );
+    }
+    if (normalized.toLowerCase() !== client.address.toLowerCase() && !ENFORCE_WALLET_MATCH) {
+      console.warn(
+        `[Gateway] Connected wallet ${normalized} differs from backend signer ${client.address}. Proceeding with backend signer (ENFORCE_WALLET_MATCH=false).`,
       );
     }
   }
