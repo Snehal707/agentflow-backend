@@ -5,26 +5,18 @@ import {
   useAccount,
   useChainId,
   usePublicClient,
+  useSwitchChain,
   useWalletClient,
 } from "wagmi";
 import { getAddress, parseUnits } from "viem";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import {
   ARC_CHAIN_ID,
-  ARC_CHAIN_ID_HEX,
   ARC_EXPLORER_URL,
   ARC_USDC_ADDRESS,
   CIRCLE_FAUCET_URL,
   GATEWAY_WALLET_ADDRESS,
 } from "@/lib/arcChain";
-
-const ARC_ADD_CHAIN_PARAMS = {
-  chainId: ARC_CHAIN_ID_HEX,
-  chainName: "Arc Testnet",
-  rpcUrls: ["https://rpc.testnet.arc.network"],
-  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-  blockExplorerUrls: ["https://testnet.arcscan.app"],
-};
 
 const erc20Abi = [
   {
@@ -76,35 +68,19 @@ export function Onboarding() {
   >("idle");
   const [depositError, setDepositError] = useState<string | null>(null);
   const [depositTxHash, setDepositTxHash] = useState<string | null>(null);
-  const [addChainPending, setAddChainPending] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
 
   const isOnArc = chainId === ARC_CHAIN_ID;
 
   const handleAddAndSwitchToArc = async () => {
-    const provider = (typeof window !== "undefined" &&
-      (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum) as
-      | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
-      | undefined;
-    if (!provider) {
-      setSwitchError("No wallet found. Install MetaMask.");
-      return;
-    }
-    setAddChainPending(true);
     setSwitchError(null);
     try {
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [ARC_ADD_CHAIN_PARAMS],
-      });
-      // wallet_addEthereumChain adds + switches when user approves; no switchChain needed
+      await switchChain({ chainId: ARC_CHAIN_ID });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to add or switch network";
       if (!msg.toLowerCase().includes("rejected") && !msg.toLowerCase().includes("user denied")) {
         setSwitchError(msg);
       }
-    } finally {
-      setAddChainPending(false);
     }
   };
   const step1Done = isConnected;
@@ -221,10 +197,10 @@ export function Onboarding() {
           {!step2Done && (
             <button
               onClick={handleAddAndSwitchToArc}
-              disabled={addChainPending}
+              disabled={isSwitchPending}
               className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
             >
-              {addChainPending ? "Switching..." : "Switch Network"}
+              {isSwitchPending ? "Switching..." : "Switch Network"}
             </button>
           )}
         </div>
@@ -302,10 +278,10 @@ export function Onboarding() {
             </span>
             <button
               onClick={handleAddAndSwitchToArc}
-              disabled={addChainPending}
+              disabled={isSwitchPending}
               className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
             >
-              {addChainPending ? "Switching..." : "Switch to Arc Testnet"}
+              {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
             </button>
           </div>
           {switchError && (
