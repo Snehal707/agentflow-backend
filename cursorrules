@@ -1,0 +1,253 @@
+# Agent Economy — Cursor Rules
+# AI agents that pay AI agents using x402 micropayments on Arc Testnet
+
+## PROJECT OVERVIEW
+Build an AI Agent Economy where one Orchestrator agent (powered by Hermes LLM) receives a user task,
+breaks it into subtasks, calls 3 specialist agents (Research, Analyst, Writer) and pays each one
+in USDC micropayments via the Circle x402 Batching SDK on Arc Testnet. Every agent is gasless.
+
+## TECH STACK
+- Language: TypeScript (strict mode)
+- Runtime: Node.js v20+
+- Framework: Express.js for each agent server
+- Payments: @circlefin/x402-batching + @x402/core + viem
+- LLM: Hermes LLM API (OpenAI-compatible)
+- Network: Arc Testnet (Chain ID: 5042002)
+- Package registry: @circlefin/* packages come from Cloudsmith private registry
+
+## PROJECT STRUCTURE
+```
+agent-economy/
+├── .env                        # All secrets go here, never commit
+├── .npmrc                      # Cloudsmith registry config
+├── package.json
+├── tsconfig.json
+├── agents/
+│   ├── research/
+│   │   └── server.ts           # Research agent — x402 paywall + Hermes call
+│   ├── analyst/
+│   │   └── server.ts           # Analyst agent — x402 paywall + Hermes call
+│   └── writer/
+│       └── server.ts           # Writer agent — x402 paywall + Hermes call
+├── orchestrator/
+│   └── index.ts                # Buys from all 3 agents, produces final output
+└── scripts/
+    ├── deposit.ts              # One-time: deposit USDC into Gateway
+    └── check-balances.ts       # Check wallet + gateway balances
+```
+
+## ARC TESTNET NETWORK DETAILS
+- Network Name: Arc Testnet
+- Chain ID: 5042002
+- RPC URL: https://rpc.testnet.arc.network
+- WebSocket: wss://rpc.testnet.arc.network
+- Currency: USDC (native gas token)
+- Explorer: https://testnet.arcscan.app
+- Faucet: https://faucet.circle.com (select "Arc Testnet")
+- Block finality: ~0.5 seconds (deterministic, irreversible)
+- Base fee: ~160 Gwei minimum (~$0.01 per tx)
+- Always set maxFeePerGas >= 160 Gwei on any direct on-chain tx
+
+## ARC ARCHITECTURE (important context)
+- Arc uses Malachite (Tendermint BFT) for consensus — sub-second deterministic finality
+- Execution layer is Reth (EVM-compatible) with stablecoin-native extensions
+- USDC is the native gas token (18 decimals on Arc)
+- Transactions finalize instantly and irreversibly — no reorgs possible
+- EVM-compatible: all standard Ethereum tooling works
+
+## x402 BATCHING SDK — HOW IT WORKS
+The SDK enables gasless micropayments. Each agent server is a "seller", orchestrator is the "buyer".
+
+Payment flow per agent call:
+1. Orchestrator GETs agent endpoint → receives 402 Payment Required
+2. Orchestrator signs a Burn Intent off-chain (free, instant, no gas)
+3. Orchestrator retries with Payment-Signature header
+4. Agent verifies signature → serves content
+5. Circle Gateway batches and settles on Arc Testnet later
+
+Key contracts on Arc Testnet:
+- GatewayWallet: 0x0077777d7EBA4688BDeF3E311b846F25870A19B9
+- GatewayMinter: 0x0022222ABE238Cc2C7Bb1f21003F0a260052475B
+- USDC: 0x3600000000000000000000000000000000000000
+
+## NPM REGISTRY CONFIG (.npmrc)
+Always include this .npmrc at project root:
+```
+@circlefin:registry=https://npm.cloudsmith.io/circle/common-private/
+//npm.cloudsmith.io/circle/common-private/:_authToken=${CLOUDSMITH_TOKEN}
+```
+
+## DEPENDENCIES
+```json
+{
+  "dependencies": {
+    "@circlefin/x402-batching": "latest",
+    "@x402/core": "latest",
+    "viem": "latest",
+    "express": "^4.18.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
+  }
+}
+```
+
+## ENVIRONMENT VARIABLES (.env)
+```
+PRIVATE_KEY=0x...                    # EVM wallet private key
+CLOUDSMITH_TOKEN=...                 # Circle private beta token
+HERMES_API_KEY=...                   # Hermes LLM API key
+HERMES_BASE_URL=...                  # Hermes API base URL (OpenAI-compatible)
+HERMES_MODEL=...                     # Hermes model name
+
+RESEARCH_AGENT_URL=http://localhost:3001
+ANALYST_AGENT_URL=http://localhost:3002
+WRITER_AGENT_URL=http://localhost:3003
+
+RESEARCH_AGENT_PRICE=0.005           # USDC price per research call
+ANALYST_AGENT_PRICE=0.003            # USDC price per analysis call
+WRITER_AGENT_PRICE=0.008             # USDC price per writing call
+```
+
+## SELLER AGENT TEMPLATE (each of the 3 agents follows this pattern)
+```typescript
+import express from 'express';
+import { createSellerMiddleware } from '@circlefin/x402-batching';
+import { privateKeyToAccount } from 'viem/accounts';
+import dotenv from 'dotenv';
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
+
+// x402 middleware — wraps the route with payment requirement
+const x402 = createSellerMiddleware({
+  network: 'arcTestnet',
+  payTo: account.address,
+  price: process.env.AGENT_PRICE || '0.005',  // USDC amount
+});
+
+app.get('/run', x402, async (req, res) => {
+  const { task } = req.query;
+  // Call Hermes LLM here with agent-specific system prompt
+  const result = await callHermes(task as string);
+  res.json({ result });
+});
+
+app.listen(3001, () => console.log('Research agent running on :3001'));
+```
+
+## BUYER ORCHESTRATOR TEMPLATE
+```typescript
+import { createBuyerClient } from '@circlefin/x402-batching';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
+const buyer = createBuyerClient({ account, network: 'arcTestnet' });
+
+// buyer.fetch() handles the 402 → sign → retry flow automatically
+const response = await buyer.fetch(`${RESEARCH_AGENT_URL}/run?task=${task}`);
+const data = await response.json();
+```
+
+## HERMES LLM INTEGRATION (OpenAI-compatible)
+```typescript
+import OpenAI from 'openai'; // or use fetch directly
+
+const hermes = new OpenAI({
+  baseURL: process.env.HERMES_BASE_URL,
+  apiKey: process.env.HERMES_API_KEY,
+});
+
+async function callHermes(systemPrompt: string, userMessage: string) {
+  const response = await hermes.chat.completions.create({
+    model: process.env.HERMES_MODEL!,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  });
+  return response.choices[0].message.content;
+}
+```
+
+## AGENT SYSTEM PROMPTS
+- Research Agent: "You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON."
+- Analyst Agent: "You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON."
+- Writer Agent: "You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable."
+
+## ORCHESTRATOR FLOW
+```
+User Input → Orchestrator (Hermes)
+  → pays Research Agent → gets raw research
+  → pays Analyst Agent → gets insights
+  → pays Writer Agent → gets final report
+  → returns report + payment receipt (tx hashes, total spent)
+```
+
+## USEFUL COMMANDS
+```bash
+# Install deps
+npm install
+
+# Run individual agents (separate terminals)
+npx tsx agents/research/server.ts
+npx tsx agents/analyst/server.ts
+npx tsx agents/writer/server.ts
+
+# Run orchestrator
+npx tsx orchestrator/index.ts "Research Ethereum's 2025 roadmap"
+
+# Deposit USDC into Gateway (one-time setup)
+npx tsx scripts/deposit.ts
+
+# Check balances
+npx tsx scripts/check-balances.ts
+```
+
+## ARC EXPLORER
+Always log transaction hashes. Users can view them at:
+https://testnet.arcscan.app/tx/{hash}
+
+## CODING RULES
+1. Always use TypeScript strict mode
+2. Always load .env with dotenv at the top of every file
+3. Never hardcode private keys or API keys
+4. Always handle errors gracefully with try/catch and meaningful messages
+5. Log payment amounts and tx hashes to console so the demo looks impressive
+6. Keep each agent server in its own file — clean separation
+7. The orchestrator should print a final receipt showing: task, total USDC spent, gas spent ($0.00), and all tx hashes
+8. Use async/await throughout, no callbacks
+9. For Arc direct transactions (deposit/withdraw), set maxFeePerGas to at least 160n * 10n**9n (160 Gwei)
+
+## DEMO OUTPUT FORMAT (orchestrator should print this)
+```
+╔══════════════════════════════════════╗
+║        AGENT ECONOMY RECEIPT         ║
+╠══════════════════════════════════════╣
+║ Task: "Research Ethereum roadmap"    ║
+║                                      ║
+║ Research Agent    $0.005 USDC  ✅    ║
+║ Analyst Agent     $0.003 USDC  ✅    ║
+║ Writer Agent      $0.008 USDC  ✅    ║
+║                                      ║
+║ Total Paid:       $0.016 USDC        ║
+║ Gas Fees:         $0.000 (gasless!)  ║
+║                                      ║
+║ View on Arc Explorer:                ║
+║ https://testnet.arcscan.app          ║
+╚══════════════════════════════════════╝
+```
+
+## REFERENCES
+- Arc Testnet Docs: https://docs.arc.network/arc/references/connect-to-arc
+- Arc Gas & Fees: https://docs.arc.network/arc/references/gas-and-fees
+- Arc Explorer: https://testnet.arcscan.app
+- Circle Faucet: https://faucet.circle.com
+- x402 SDK Skill: .cursor-skill/SKILL.md (read this for full SDK reference)

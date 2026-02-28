@@ -1,0 +1,50 @@
+{
+  "name": "agentflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentFlow — Autonomous AI agents. Instant payments. Zero gas. Arc Testnet + Circle x402.",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx server.ts",
+    "setup": "node scripts/setup.js",
+    "setup:ps": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
+    "build": "tsc",
+    "dev:facilitator": "tsx facilitator/server.ts",
+    "dev:research": "tsx agents/research/server.ts",
+    "dev:analyst": "tsx agents/analyst/server.ts",
+    "dev:writer": "tsx agents/writer/server.ts",
+    "dev:ui": "tsx ui/server.ts",
+    "dev:web": "npm run dev --prefix web",
+    "dev:stack": "concurrently -n f,r,a,w -c blue,green,yellow,magenta \"npm run dev:facilitator\" \"npm run dev:research\" \"npm run dev:analyst\" \"npm run dev:writer\"",
+    "dev:orchestrator": "tsx orchestrator/index.ts",
+    "script:deposit": "tsx scripts/deposit.ts",
+    "script:check-balances": "tsx scripts/check-balances.ts",
+    "gen:seller-address": "node -e \"const { privateKeyToAccount } = require('viem/accounts'); const pk = '0x' + require('crypto').randomBytes(32).toString('hex'); const a = privateKeyToAccount(pk); console.log('Add to .env:\\nSELLER_ADDRESS=' + a.address);\"",
+    "lint": "echo \"No linter configured\""
+  },
+  "keywords": [
+    "circle",
+    "x402",
+    "gateway",
+    "micropayments",
+    "usdc"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@circlefin/x402-batching": "latest",
+    "@x402/core": "^2.3.0",
+    "@x402/evm": "^2.5.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^4.83.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.1",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.3"
+  }
+}

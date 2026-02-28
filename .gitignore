@@ -1,0 +1,9 @@
+node_modules
+web/node_modules
+dist
+web/.next
+web/out
+.env
+.DS_Store
+*.log
+.cursor-skill

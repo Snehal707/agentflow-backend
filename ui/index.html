@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AgentFlow – Autonomous AI agents. Instant payments. Zero gas.</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+      :root {
+        --primary: #6366f1;
+        --accent: #22d3ee;
+        --bg: #0f0f1a;
+        --surface: #1a1a2e;
+        --success: #22c55e;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --danger: #f97373;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+          sans-serif;
+        background: radial-gradient(circle at top, #1f2937 0, var(--bg) 55%);
+        color: var(--text);
+      }
+
+      .app {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 3rem;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        gap: 1.5rem;
+        align-items: center;
+        margin-bottom: 2rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+      }
+
+      .logo {
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        background: conic-gradient(
+          from 180deg,
+          var(--primary),
+          var(--accent),
+          var(--primary)
+        );
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 800;
+        font-size: 1.1rem;
+        box-shadow: 0 0 24px rgba(99, 102, 241, 0.4);
+      }
+
+      .brand-text h1 {
+        margin: 0;
+        font-size: 1.3rem;
+        letter-spacing: 0.04em;
+      }
+
+      .brand-text p {
+        margin: 0.1rem 0 0;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .network-badge {
+        padding: 0.55rem 0.9rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--success);
+        box-shadow: 0 0 10px rgba(34, 197, 94, 0.7);
+      }
+
+      .network-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .network-main {
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 1.75rem;
+      }
+
+      .hero-card {
+        background: radial-gradient(circle at top left, #1e293b 0, #020617 60%);
+        border-radius: 1.5rem;
+        padding: 1.75rem 1.75rem 1.5rem;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.9);
+      }
+
+      .hero-top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1.25rem;
+      }
+
+      .prompt-label {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+      }
+
+      .prompt-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+      }
+
+      .arc-facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .badge {
+        font-size: 0.72rem;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .prompt-input-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.9rem;
+      }
+
+      textarea#taskInput {
+        flex: 1 1 260px;
+        min-height: 80px;
+        border-radius: 0.9rem;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(15, 23, 42, 0.9);
+        color: var(--text);
+        padding: 0.9rem 1rem;
+        font-size: 0.95rem;
+        resize: vertical;
+        outline: none;
+      }
+
+      textarea#taskInput::placeholder {
+        color: #6b7280;
+      }
+
+      #runButton {
+        padding: 0.85rem 1.4rem;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white;
+        font-weight: 600;
+        font-size: 0.95rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        box-shadow: 0 18px 45px rgba(37, 99, 235, 0.6);
+      }
+
+      #runButton[disabled] {
+        opacity: 0.65;
+        cursor: default;
+        box-shadow: none;
+      }
+
+      .run-icon {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(15, 23, 42, 0.85);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(15, 23, 42, 0.75);
+      }
+
+      .run-icon span {
+        border-style: solid;
+        border-width: 4px 0 4px 7px;
+        border-color: transparent transparent transparent white;
+        margin-left: 1px;
+      }
+
+      .layout-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        gap: 1.5rem;
+        align-items: flex-start;
+      }
+
+      .pipeline-card,
+      .receipt-card,
+      .report-card {
+        background: radial-gradient(circle at top left, #111827 0, #020617 65%);
+        border-radius: 1.25rem;
+        padding: 1.2rem 1.35rem;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+      }
+
+      .card-title {
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        margin-bottom: 0.75rem;
+      }
+
+      .steps {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0.7rem;
+        align-items: center;
+        padding: 0.7rem 0.75rem;
+        border-radius: 0.9rem;
+        background: rgba(15, 23, 42, 0.9);
+        border: 1px solid rgba(55, 65, 81, 0.8);
+      }
+
+      .step-index {
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .step-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+
+      .step-label {
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+
+      .step-sub {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .step-status {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.2rem;
+        min-width: 140px;
+      }
+
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(148, 163, 184, 0.4);
+        border-top-color: var(--accent);
+        animation: spin 700ms linear infinite;
+      }
+
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .check {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: rgba(22, 163, 74, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--success);
+        font-size: 0.7rem;
+      }
+
+      .cross {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(248, 113, 113, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--danger);
+        font-size: 0.7rem;
+      }
+
+      .status-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .tx-hash {
+        font-size: 0.7rem;
+        color: var(--muted);
+        max-width: 180px;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .receipt-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        gap: 0.75rem 1rem;
+        align-items: center;
+      }
+
+      .receipt-row-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .receipt-row-value {
+        font-size: 0.9rem;
+        text-align: right;
+      }
+
+      .receipt-total {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: white;
+      }
+
+      .explorer-link {
+        font-size: 0.8rem;
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .explorer-link:hover {
+        text-decoration: underline;
+      }
+
+      .report-card h2 {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+      }
+
+      #report {
+        max-height: 380px;
+        overflow: auto;
+        padding-right: 0.5rem;
+        font-size: 0.9rem;
+      }
+
+      #report h1,
+      #report h2,
+      #report h3 {
+        color: #e5e7eb;
+      }
+
+      #report code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          'Liberation Mono', 'Courier New', monospace;
+        font-size: 0.85rem;
+      }
+
+      #report pre {
+        background: #020617;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        overflow: auto;
+      }
+
+      .error-banner {
+        margin-top: 0.6rem;
+        padding: 0.5rem 0.8rem;
+        border-radius: 0.7rem;
+        background: rgba(239, 68, 68, 0.12);
+        border: 1px solid rgba(248, 113, 113, 0.8);
+        color: #fecaca;
+        font-size: 0.8rem;
+        display: none;
+      }
+
+      footer {
+        margin-top: 2rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      footer strong {
+        color: #e5e7eb;
+      }
+
+      @media (max-width: 900px) {
+        .layout-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .receipt-grid {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+      }
+
+      @media (max-width: 640px) {
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 1rem;
+        }
+
+        .prompt-input-row {
+          flex-direction: column;
+        }
+
+        #runButton {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div class="brand">
+          <div class="logo">AF</div>
+          <div class="brand-text">
+            <h1>AgentFlow</h1>
+            <p>Autonomous AI agents. Instant payments. Zero gas.</p>
+          </div>
+        </div>
+        <div class="network-badge">
+          <div class="dot"></div>
+          <div>
+            <div class="network-main">Arc Testnet · Chain ID 5042002</div>
+            <div class="network-label">
+              USDC-native gas ·
+              <a
+                href="https://testnet.arcscan.app"
+                target="_blank"
+                rel="noreferrer"
+                class="explorer-link"
+                >View on Arcscan</a
+              >
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-card">
+          <div class="hero-top">
+            <div>
+              <div class="prompt-label">Prompt</div>
+              <div class="prompt-input-row">
+                <textarea
+                  id="taskInput"
+                  placeholder="What should the agents research?"
+                ></textarea>
+                <button id="runButton">
+                  <span class="run-icon"><span></span></span>
+                  <span>Run AgentFlow</span>
+                </button>
+              </div>
+            </div>
+            <div class="prompt-actions">
+              <div class="arc-facts">
+                <span class="badge">~0.5s finality</span>
+                <span class="badge">~$0.01 / tx</span>
+                <span class="badge">USDC gas</span>
+                <span class="badge">EVM compatible</span>
+              </div>
+            </div>
+          </div>
+          <div id="errorBanner" class="error-banner"></div>
+        </section>
+
+        <section class="layout-grid">
+          <div class="pipeline-card">
+            <div class="card-title">Agent pipeline</div>
+            <div class="steps">
+              <div class="step" id="step-research">
+                <div class="step-index">1</div>
+                <div class="step-main">
+                  <div class="step-label">Research Agent</div>
+                  <div class="step-sub">Paying $0.005 USDC for raw research</div>
+                </div>
+                <div class="step-status">
+                  <div class="spinner" data-role="icon"></div>
+                  <div class="status-label" data-role="status-text">
+                    Waiting to start
+                  </div>
+                  <div class="tx-hash" data-role="tx"></div>
+                </div>
+              </div>
+              <div class="step" id="step-analyst">
+                <div class="step-index">2</div>
+                <div class="step-main">
+                  <div class="step-label">Analyst Agent</div>
+                  <div class="step-sub">
+                    Paying $0.003 USDC for insights and structure
+                  </div>
+                </div>
+                <div class="step-status">
+                  <div class="spinner" data-role="icon"></div>
+                  <div class="status-label" data-role="status-text">
+                    Waiting to start
+                  </div>
+                  <div class="tx-hash" data-role="tx"></div>
+                </div>
+              </div>
+              <div class="step" id="step-writer">
+                <div class="step-index">3</div>
+                <div class="step-main">
+                  <div class="step-label">Writer Agent</div>
+                  <div class="step-sub">
+                    Paying $0.008 USDC for final polished report
+                  </div>
+                </div>
+                <div class="step-status">
+                  <div class="spinner" data-role="icon"></div>
+                  <div class="status-label" data-role="status-text">
+                    Waiting to start
+                  </div>
+                  <div class="tx-hash" data-role="tx"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="receipt-card">
+            <div class="card-title">Payment receipt</div>
+            <div class="receipt-grid">
+              <div class="receipt-row-label">Research Agent</div>
+              <div class="receipt-row-value" id="receipt-research">$0.005</div>
+
+              <div class="receipt-row-label">Analyst Agent</div>
+              <div class="receipt-row-value" id="receipt-analyst">$0.003</div>
+
+              <div class="receipt-row-label">Writer Agent</div>
+              <div class="receipt-row-value" id="receipt-writer">$0.008</div>
+
+              <div class="receipt-row-label">Total paid</div>
+              <div class="receipt-row-value receipt-total" id="receipt-total">
+                $0.016 USDC
+              </div>
+
+              <div class="receipt-row-label">Gas fees</div>
+              <div class="receipt-row-value">$0.000 (gasless via x402)</div>
+
+              <div class="receipt-row-label">Transactions</div>
+              <div class="receipt-row-value" id="receipt-tx-list">
+                Waiting for payments...
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="report-card">
+          <h2>Final report</h2>
+          <div id="report">
+            <p style="color: var(--muted); font-size: 0.9rem;">
+              Run AgentFlow to see the writer agent's markdown report rendered
+              here in real time.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <div>
+          <strong>AgentFlow</strong> · Powered by Arc Testnet · Circle x402 ·
+          Hermes AI
+        </div>
+        <div>Chain ID 5042002 · RPC https://rpc.testnet.arc.network</div>
+      </footer>
+    </div>
+
+    <script>
+      const taskInput = document.getElementById('taskInput');
+      const runButton = document.getElementById('runButton');
+      const errorBanner = document.getElementById('errorBanner');
+
+      const steps = {
+        research: document.getElementById('step-research'),
+        analyst: document.getElementById('step-analyst'),
+        writer: document.getElementById('step-writer'),
+      };
+
+      function setStepState(stepKey, state) {
+        const el = steps[stepKey];
+        if (!el) return;
+        const icon = el.querySelector('[data-role=\"icon\"]');
+        const statusText = el.querySelector('[data-role=\"status-text\"]');
+        const tx = el.querySelector('[data-role=\"tx\"]');
+
+        if (state === 'idle') {
+          icon.className = 'spinner';
+          icon.textContent = '';
+          statusText.textContent = 'Waiting to start';
+          tx.textContent = '';
+        } else if (state === 'running') {
+          icon.className = 'spinner';
+          icon.textContent = '';
+          statusText.textContent = 'Paying via Circle x402...';
+        } else if (state && state.type === 'complete') {
+          icon.className = 'check';
+          icon.textContent = '✓';
+          statusText.textContent = `Paid $${state.amount} USDC`;
+          tx.textContent = state.tx;
+        } else if (state && state.type === 'error') {
+          icon.className = 'cross';
+          icon.textContent = '!';
+          statusText.textContent = state.message || 'Payment failed';
+        }
+      }
+
+      function markActiveStepAsFailed(message) {
+        const order = ['research', 'analyst', 'writer'];
+        for (const key of order) {
+          const el = steps[key];
+          if (!el) continue;
+          const statusText = el.querySelector('[data-role="status-text"]');
+          if (!statusText) continue;
+          if (statusText.textContent === 'Paying via Circle x402...') {
+            setStepState(key, { type: 'error', message: message || 'Failed' });
+            break;
+          }
+        }
+      }
+
+      function resetUI() {
+        errorBanner.style.display = 'none';
+        errorBanner.textContent = '';
+        setStepState('research', 'idle');
+        setStepState('analyst', 'idle');
+        setStepState('writer', 'idle');
+        document.getElementById('receipt-total').textContent = '$0.016 USDC';
+        document.getElementById('receipt-tx-list').textContent =
+          'Waiting for payments...';
+        const reportEl = document.getElementById('report');
+        reportEl.innerHTML =
+          '<p style=\"color: var(--muted); font-size: 0.9rem;\">Run AgentFlow to see the writer agent\\'s markdown report rendered here in real time.</p>';
+      }
+
+      function handleEvent(event) {
+        if (!event || !event.type) return;
+
+        if (event.type === 'step_start') {
+          setStepState(event.step, 'running');
+        } else if (event.type === 'step_complete') {
+          setStepState(event.step, {
+            type: 'complete',
+            tx: event.tx,
+            amount: event.amount,
+          });
+        } else if (event.type === 'receipt') {
+          document.getElementById(
+            'receipt-total',
+          ).textContent = `$${event.total} USDC`;
+          document.getElementById(
+            'receipt-tx-list',
+          ).textContent = `Research: ${event.researchTx} · Analyst: ${event.analystTx} · Writer: ${event.writerTx}`;
+        } else if (event.type === 'report') {
+          const reportEl = document.getElementById('report');
+          try {
+            reportEl.innerHTML = window.marked.parse(event.markdown || '');
+          } catch (e) {
+            reportEl.textContent = event.markdown || '';
+          }
+        } else if (event.type === 'error') {
+          if (event.step && steps[event.step]) {
+            setStepState(event.step, { type: 'error', message: 'Failed' });
+          } else {
+            markActiveStepAsFailed(event.message || 'Failed');
+          }
+          errorBanner.textContent = event.message || 'Unknown error';
+          errorBanner.style.display = 'block';
+        }
+      }
+
+      async function runAgentFlow() {
+        const task = (taskInput.value || '').trim();
+        if (!task) {
+          errorBanner.textContent = 'Please enter a research task first.';
+          errorBanner.style.display = 'block';
+          return;
+        }
+
+        resetUI();
+        runButton.disabled = true;
+
+        try {
+          const response = await fetch('/run', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ task }),
+          });
+
+          if (!response.ok || !response.body) {
+            throw new Error('Failed to start AgentFlow run.');
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const json = trimmed.slice(5).trim();
+              if (!json) continue;
+              try {
+                const event = JSON.parse(json);
+                handleEvent(event);
+              } catch (e) {
+                console.error('Failed to parse event', e);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          markActiveStepAsFailed(
+            err && err.message ? err.message : 'Unexpected error',
+          );
+          errorBanner.textContent =
+            err && err.message
+              ? err.message
+              : 'Unexpected error while running AgentFlow.';
+          errorBanner.style.display = 'block';
+        } finally {
+          runButton.disabled = false;
+        }
+      }
+
+      runButton.addEventListener('click', () => {
+        runAgentFlow();
+      });
+
+      taskInput.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          runAgentFlow();
+        }
+      });
+    </script>
+  </body>
+  </html>
+
