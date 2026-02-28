@@ -37,7 +37,9 @@ const SYSTEM_PROMPT = `You are a writer agent. Given research and analysis, writ
 ## Data & Statistics (markdown table where appropriate)
 ## Analysis (analytical conclusions from analyst agent)
 ## Conclusion (final summary)
----`;
+---
+Do NOT add any disclaimer or warning at the end of the report. The disclaimer is handled by the application automatically.
+Do NOT use > symbol anywhere in the output. Not for lists, not for quotes, not for any reason.`;
 
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {
