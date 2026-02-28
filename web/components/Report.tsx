@@ -32,6 +32,11 @@ export function Report({ markdown }: { markdown?: string | null }) {
     );
   }
 
+  const cleaned = markdown
+    .split("\n")
+    .map((line) => line.replace(/^>\s?/, ""))
+    .join("\n");
+
   return (
     <div className="rounded-xl border border-white/5 overflow-hidden bg-bg-secondary/40">
       <div className="bg-bg-tertiary border-b border-white/10 p-4 flex justify-between items-center font-mono">
@@ -102,8 +107,34 @@ export function Report({ markdown }: { markdown?: string | null }) {
             ),
           }}
         >
-          {markdown}
+          {cleaned}
         </ReactMarkdown>
+      </div>
+      <div className="border-t border-white/10 p-4 bg-amber-500/10 border-l-4 border-amber-500/60 rounded-b-xl">
+        <p className="text-sm text-amber-200/95 flex items-start gap-2">
+          <span aria-hidden>⚠️</span>
+          <span>
+            AI-generated report. Financial figures may be outdated — verify with{" "}
+            <a
+              href="https://coinmarketcap.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gold hover:text-gold-light underline underline-offset-2"
+            >
+              CoinMarketCap
+            </a>
+            ,{" "}
+            <a
+              href="https://www.coingecko.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gold hover:text-gold-light underline underline-offset-2"
+            >
+              CoinGecko
+            </a>
+            , or other live sources before making decisions.
+          </span>
+        </p>
       </div>
     </div>
   );

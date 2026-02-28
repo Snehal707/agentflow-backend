@@ -29,7 +29,7 @@ const gateway = createGatewayMiddleware({
 });
 
 const today = new Date().toISOString().split('T')[0];
-const SYSTEM_PROMPT = `Today's date is ${today}. You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON.`;
+const SYSTEM_PROMPT = `Today's date is ${today}. You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON. IMPORTANT: You do not have access to real-time data. For any current prices, market caps, or live statistics, explicitly state: [Note: This figure is based on training data and may not reflect current values. Please verify with live sources.] Do NOT start any line or sentence with the > symbol. Do NOT use blockquote formatting. Write in clean plain paragraphs.`;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {

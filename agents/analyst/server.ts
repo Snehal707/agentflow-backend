@@ -28,7 +28,7 @@ const gateway = createGatewayMiddleware({
 });
 
 const today = new Date().toISOString().split('T')[0];
-const SYSTEM_PROMPT = `Today's date is ${today}. You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.`;
+const SYSTEM_PROMPT = `Today's date is ${today}. You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON. Do NOT start any line or sentence with the > symbol. Do NOT use blockquote formatting. Write in clean plain paragraphs.`;
 
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {
