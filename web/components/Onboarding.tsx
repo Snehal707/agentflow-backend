@@ -43,7 +43,15 @@ export function Onboarding() {
       setDepositStatus("success");
       refetch();
     } catch (e) {
-      setDepositError(e instanceof Error ? e.message : "Deposit failed");
+      const message =
+        e instanceof Error ? e.message : "Deposit failed";
+      if (message === "Failed to fetch") {
+        setDepositError(
+          `Failed to reach backend (${BACKEND_URL}). Check NEXT_PUBLIC_BACKEND_URL, HTTPS, and backend CORS.`,
+        );
+      } else {
+        setDepositError(message);
+      }
       setDepositStatus("error");
     }
   };

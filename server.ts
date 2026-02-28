@@ -100,23 +100,42 @@ function createRunId(prefix: string): string {
 
 function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true;
-  if (/^https?:\/\/localhost(?::\d+)?$/i.test(origin)) return true;
-  if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) return true;
-  return false;
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host.endsWith('.vercel.app')) return true;
+    // Allow custom production domains over HTTPS.
+    if (url.protocol === 'https:') return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
-  if (typeof origin === 'string' && isAllowedOrigin(origin)) {
+  const allowed = isAllowedOrigin(typeof origin === 'string' ? origin : undefined);
+
+  if (typeof origin === 'string' && allowed) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   } else if (!origin) {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const requestedHeaders = req.headers['access-control-request-headers'];
+  if (typeof requestedHeaders === 'string' && requestedHeaders.trim()) {
+    res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
+  } else {
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
 
   if (req.method === 'OPTIONS') {
+    if (origin && !allowed) {
+      res.status(403).json({ error: 'Origin not allowed by CORS policy.' });
+      return;
+    }
     res.sendStatus(204);
     return;
   }
