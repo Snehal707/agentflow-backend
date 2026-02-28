@@ -1,6 +1,11 @@
 "use client";
 
-export type StepStatus = "idle" | "running" | "complete";
+export type StepStatus =
+  | "idle"
+  | "running"
+  | "awaiting_signature"
+  | "complete"
+  | "error";
 
 export interface AgentStep {
   key: "research" | "analyst" | "writer";
@@ -17,7 +22,7 @@ const STEPS: Omit<AgentStep, "status" | "tx">[] = [
 ];
 
 export function AgentPipeline({ steps }: { steps: AgentStep[] }) {
-  const stepMap = Object.fromEntries(steps.map((s) => [s.key, s]));
+  const stepMap = Object.fromEntries(steps.map((step) => [step.key, step]));
 
   return (
     <div className="rounded-xl bg-gradient-to-br from-[var(--surface)] to-black/60 border border-white/10 p-5">
@@ -32,13 +37,14 @@ export function AgentPipeline({ steps }: { steps: AgentStep[] }) {
             price,
             status: "idle" as StepStatus,
           };
+
           return (
             <div
               key={key}
               className="flex items-center gap-3 p-3 rounded-lg bg-black/40 border border-white/5"
             >
               <div className="w-6 h-6 rounded-full border border-white/20 flex items-center justify-center text-xs text-[var(--muted)]">
-                {STEPS.findIndex((s) => s.key === key) + 1}
+                {STEPS.findIndex((item) => item.key === key) + 1}
               </div>
               <div className="flex-1">
                 <div className="text-sm font-medium">{step.label}</div>
@@ -46,12 +52,13 @@ export function AgentPipeline({ steps }: { steps: AgentStep[] }) {
                   Paying ${step.price} USDC
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-0.5 min-w-[140px]">
+              <div className="flex flex-col items-end gap-0.5 min-w-[200px]">
                 {step.status === "idle" && (
                   <span className="text-xs text-[var(--muted)]">
                     Waiting to start
                   </span>
                 )}
+
                 {step.status === "running" && (
                   <>
                     <div className="w-4 h-4 rounded-full border-2 border-accent/50 border-t-accent animate-spin" />
@@ -60,10 +67,20 @@ export function AgentPipeline({ steps }: { steps: AgentStep[] }) {
                     </span>
                   </>
                 )}
+
+                {step.status === "awaiting_signature" && (
+                  <>
+                    <div className="w-4 h-4 rounded-full border-2 border-amber-300/50 border-t-amber-300 animate-spin" />
+                    <span className="text-xs text-amber-200">
+                      Waiting for MetaMask signature...
+                    </span>
+                  </>
+                )}
+
                 {step.status === "complete" && (
                   <>
                     <div className="w-5 h-5 rounded-full border border-[var(--success)] flex items-center justify-center text-[var(--success)] text-xs">
-                      ✓
+                      OK
                     </div>
                     <span className="text-xs text-[var(--success)]">
                       Paid ${step.price} USDC
@@ -73,12 +90,18 @@ export function AgentPipeline({ steps }: { steps: AgentStep[] }) {
                         href={`https://testnet.arcscan.app/tx/${step.tx}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-accent hover:underline truncate max-w-[120px]"
+                        className="text-xs text-accent hover:underline truncate max-w-[160px]"
                       >
-                        {step.tx.slice(0, 8)}...
+                        {step.tx.slice(0, 10)}...
                       </a>
                     )}
                   </>
+                )}
+
+                {step.status === "error" && (
+                  <span className="text-xs text-[var(--danger)]">
+                    Failed
+                  </span>
                 )}
               </div>
             </div>

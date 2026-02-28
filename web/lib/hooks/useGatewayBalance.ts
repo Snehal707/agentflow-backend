@@ -10,6 +10,9 @@ export function useGatewayBalance(address?: string | null) {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["gateway-balance", address ?? "default"],
     queryFn: async () => {
+      if (!address) {
+        return { balance: 0, formatted: "0" };
+      }
       const params = address ? new URLSearchParams({ address }) : "";
       const url = `${BACKEND_URL}/gateway-balance${params ? `?${params}` : ""}`;
       const res = await fetch(url);
@@ -21,7 +24,7 @@ export function useGatewayBalance(address?: string | null) {
       const balance = parseFloat(json.balance || json.formatted || "0");
       return { balance, formatted: json.formatted || json.balance };
     },
-    enabled: true,
+    enabled: Boolean(address),
     staleTime: 5000,
     refetchInterval: 10000,
   });

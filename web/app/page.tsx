@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useAccount, useChainId } from "wagmi";
+import { useCallback, useState } from "react";
+import { useAccount, useChainId, useWalletClient } from "wagmi";
 import { Header } from "@/components/Header";
 import { Onboarding } from "@/components/Onboarding";
 import { AgentPipeline, type AgentStep } from "@/components/AgentPipeline";
@@ -10,18 +10,42 @@ import { Report } from "@/components/Report";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import { useStackHealth } from "@/lib/hooks/useStackHealth";
 import { ARC_CHAIN_ID } from "@/lib/arcChain";
+import { payProtectedResource } from "@/lib/x402BrowserClient";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
+const AGENT_ENDPOINTS = {
+  research: `${BACKEND_URL}/agent/research/run`,
+  analyst: `${BACKEND_URL}/agent/analyst/run`,
+  writer: `${BACKEND_URL}/agent/writer/run`,
+} as const;
+
+const PRICES = {
+  research: "0.005",
+  analyst: "0.003",
+  writer: "0.008",
+} as const;
+
 const INITIAL_STEPS: AgentStep[] = [
-  { key: "research", label: "Research Agent", price: "0.005", status: "idle" },
-  { key: "analyst", label: "Analyst Agent", price: "0.003", status: "idle" },
-  { key: "writer", label: "Writer Agent", price: "0.008", status: "idle" },
+  { key: "research", label: "Research Agent", price: PRICES.research, status: "idle" },
+  { key: "analyst", label: "Analyst Agent", price: PRICES.analyst, status: "idle" },
+  { key: "writer", label: "Writer Agent", price: PRICES.writer, status: "idle" },
 ];
+
+type StepKey = AgentStep["key"];
+
+type ResearchPayload = { task?: string; result?: string };
+type AnalystPayload = { research?: string; result?: string };
+type WriterPayload = { research?: string; analysis?: string; result?: string };
+
+interface StepFailure extends Error {
+  step?: StepKey;
+}
 
 export default function Home() {
   const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
   const { gatewayBalance, isLowBalance, refetch } = useGatewayBalance(address);
   const { stackHealth } = useStackHealth();
@@ -41,6 +65,7 @@ export default function Home() {
   const isOnArc = chainId === ARC_CHAIN_ID;
   const canRun =
     isConnected &&
+    Boolean(walletClient) &&
     isOnArc &&
     !isLowBalance &&
     gatewayBalance >= 0.016 &&
@@ -51,18 +76,45 @@ export default function Home() {
     ? "Enter a research task"
     : !isConnected
       ? "Connect wallet"
-      : !isOnArc
-        ? "Switch to Arc Testnet"
-        : isLowBalance || gatewayBalance < 0.016
-          ? "Low Gateway balance (need ≥0.016 USDC)"
-          : isRunning
-            ? "Running…"
-            : null;
+      : !walletClient
+        ? "Wallet not ready"
+        : !isOnArc
+          ? "Switch to Arc Testnet"
+          : isLowBalance || gatewayBalance < 0.016
+            ? "Low Gateway balance (need >= 0.016 USDC)"
+            : isRunning
+              ? "Running..."
+              : null;
+
+  const updateStep = useCallback(
+    (step: StepKey, status: AgentStep["status"], tx?: string) => {
+      setSteps((previous) =>
+        previous.map((item) =>
+          item.key === step
+            ? {
+                ...item,
+                status,
+                tx: tx ?? item.tx,
+              }
+            : item,
+        ),
+      );
+    },
+    [],
+  );
 
   const runAgentFlow = useCallback(async () => {
-    const t = task.trim();
-    if (!t) {
+    const trimmedTask = task.trim();
+    if (!trimmedTask) {
       setError("Please enter a research task.");
+      return;
+    }
+    if (!walletClient || !address) {
+      setError("Connect MetaMask before running AgentFlow.");
+      return;
+    }
+    if (!isOnArc) {
+      setError("Switch to Arc Testnet before running AgentFlow.");
       return;
     }
 
@@ -72,79 +124,81 @@ export default function Home() {
     setSteps(INITIAL_STEPS);
     setIsRunning(true);
 
+    const runPaidStep = async <TResponse, TBody extends Record<string, unknown>>(
+      step: StepKey,
+      endpoint: string,
+      body: TBody,
+    ): Promise<{ data: TResponse; tx?: string }> => {
+      try {
+        updateStep(step, "running");
+        const result = await payProtectedResource<TResponse, TBody>({
+          url: endpoint,
+          method: "POST",
+          body,
+          walletClient,
+          payer: address,
+          chainId: ARC_CHAIN_ID,
+          onAwaitSignature: () => updateStep(step, "awaiting_signature"),
+        });
+        updateStep(step, "complete", result.transaction);
+        return { data: result.data, tx: result.transaction };
+      } catch (cause) {
+        updateStep(step, "error");
+        const message =
+          cause instanceof Error ? cause.message : "Unknown payment error";
+        const failure = new Error(`${step} step failed: ${message}`) as StepFailure;
+        failure.step = step;
+        throw failure;
+      }
+    };
+
     try {
-      const res = await fetch(`${BACKEND_URL}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task: t, userAddress: address }),
+      const researchStep = await runPaidStep<ResearchPayload, { task: string }>(
+        "research",
+        AGENT_ENDPOINTS.research,
+        { task: trimmedTask },
+      );
+
+      const analystStep = await runPaidStep<AnalystPayload, { research: string }>(
+        "analyst",
+        AGENT_ENDPOINTS.analyst,
+        { research: JSON.stringify(researchStep.data) },
+      );
+
+      const writerStep = await runPaidStep<
+        WriterPayload,
+        { research: string; analysis: string }
+      >("writer", AGENT_ENDPOINTS.writer, {
+        research: JSON.stringify(researchStep.data),
+        analysis: JSON.stringify(analystStep.data),
       });
 
-      if (!res.ok || !res.body) {
-        throw new Error("Failed to start AgentFlow.");
-      }
+      setReceipt({
+        researchTx: researchStep.tx,
+        analystTx: analystStep.tx,
+        writerTx: writerStep.tx,
+        total: (
+          Number(PRICES.research) +
+          Number(PRICES.analyst) +
+          Number(PRICES.writer)
+        ).toFixed(3),
+      });
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const json = trimmed.slice(5).trim();
-          if (!json) continue;
-          try {
-            const event = JSON.parse(json);
-            if (event.type === "step_start") {
-              setSteps((prev) =>
-                prev.map((s) =>
-                  s.key === event.step ? { ...s, status: "running" as const } : s
-                )
-              );
-            } else if (event.type === "step_complete") {
-              setSteps((prev) =>
-                prev.map((s) =>
-                  s.key === event.step
-                    ? {
-                        ...s,
-                        status: "complete" as const,
-                        tx: event.tx,
-                      }
-                    : s
-                )
-              );
-            } else if (event.type === "receipt") {
-              setReceipt({
-                researchTx: event.researchTx,
-                analystTx: event.analystTx,
-                writerTx: event.writerTx,
-                total: event.total,
-              });
-            } else if (event.type === "report") {
-              setReport(event.markdown || "");
-            } else if (event.type === "error") {
-              setError(event.message || "Unknown error");
-            }
-          } catch {
-            // ignore parse errors
-          }
-        }
-      }
+      const markdown =
+        writerStep.data.result ||
+        "Writer agent returned no markdown output.";
+      setReport(markdown);
       refetch();
-    } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Unexpected error running AgentFlow."
-      );
+    } catch (err) {
+      const failure = err as StepFailure;
+      setError(failure.message || "Unexpected error running AgentFlow.");
+      if (failure.step) {
+        updateStep(failure.step, "error");
+      }
     } finally {
       setIsRunning(false);
     }
-  }, [task, refetch]);
+  }, [address, isOnArc, refetch, task, updateStep, walletClient]);
 
   const reset = useCallback(() => {
     setError(null);
@@ -160,9 +214,8 @@ export default function Home() {
 
       {stackHealth && !stackHealth.ok && (
         <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm text-amber-200">
-          <strong>Backend not ready.</strong> Run{" "}
-          <code className="bg-black/30 px-1 rounded">npm run dev:stack</code>
-          {" "}(or start facilitator on 3000 and agents on 3001–3003 separately).
+          <strong>Backend not ready.</strong> Ensure Railway is running the
+          unified backend (`server.ts`) and exposes `/agent/*/run`.
         </div>
       )}
 
@@ -173,7 +226,7 @@ export default function Home() {
         <div className="flex flex-wrap gap-4 items-start">
           <textarea
             value={task}
-            onChange={(e) => setTask(e.target.value)}
+            onChange={(event) => setTask(event.target.value)}
             placeholder="What should the agents research?"
             className="flex-1 min-w-[260px] min-h-[80px] rounded-xl bg-black/40 border border-white/20 px-4 py-3 text-sm text-white placeholder:text-gray-500 resize-y focus:outline-none focus:ring-2 focus:ring-primary/50"
             disabled={isRunning}
@@ -211,7 +264,7 @@ export default function Home() {
               >
                 {badge}
               </span>
-            )
+            ),
           )}
         </div>
         {error && (
@@ -233,9 +286,7 @@ export default function Home() {
           <strong className="text-white">AgentFlow</strong> · Powered by Arc
           Testnet · Circle x402 · Hermes AI
         </div>
-        <div>
-          Chain ID {ARC_CHAIN_ID} · RPC https://rpc.testnet.arc.network
-        </div>
+        <div>Chain ID {ARC_CHAIN_ID} · RPC https://rpc.testnet.arc.network</div>
       </footer>
     </div>
   );

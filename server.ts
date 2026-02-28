@@ -7,28 +7,33 @@ import {
   createGatewayMiddleware,
   isBatchPayment,
 } from '@circlefin/x402-batching/server';
-import { GatewayClient } from '@circlefin/x402-batching/client';
 import { callHermes } from './lib/hermes';
 
 dotenv.config();
 
 type OrchestratorStep = 'research' | 'analyst' | 'writer';
 
-type StepEvent =
-  | { type: 'step_start'; step: OrchestratorStep; price: string }
-  | { type: 'step_complete'; step: OrchestratorStep; tx: string; amount: string }
+type ProxyEvent =
+  | { type: 'proxy_start'; step: OrchestratorStep }
   | {
-      type: 'receipt';
-      total: string;
-      researchTx: string;
-      analystTx: string;
-      writerTx: string;
+      type: 'payment_required';
+      step: OrchestratorStep;
+      paymentRequiredHeader: string;
     }
-  | { type: 'report'; markdown: string; summary: string }
-  | { type: 'error'; message: string; step?: OrchestratorStep };
+  | {
+      type: 'proxy_response';
+      step: OrchestratorStep;
+      status: number;
+      transaction?: string;
+      data: unknown;
+    }
+  | { type: 'error'; message: string; step?: OrchestratorStep; status?: number };
 
 const NETWORK_NAME = 'Arc Testnet';
 const CHAIN_ID = 5042002;
+const ARC_TESTNET_DOMAIN = Number(process.env.GATEWAY_DOMAIN || 26);
+const GATEWAY_API_BASE_URL =
+  process.env.GATEWAY_API_BASE_URL || 'https://gateway-api-testnet.circle.com/v1';
 
 const FACILITATOR_PORT = Number(process.env.FACILITATOR_PORT || 3000);
 const RESEARCH_PORT = Number(process.env.RESEARCH_AGENT_PORT || 3001);
@@ -41,7 +46,6 @@ const RESEARCH_URL = `http://127.0.0.1:${RESEARCH_PORT}/run`;
 const ANALYST_URL = `http://127.0.0.1:${ANALYST_PORT}/run`;
 const WRITER_URL = `http://127.0.0.1:${WRITER_PORT}/run`;
 
-const PAYMENT_TIMEOUT_MS = Number(process.env.PAYMENT_TIMEOUT_MS || 90_000);
 const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || 80_000);
 
 const SYSTEM_PROMPTS = {
@@ -51,28 +55,42 @@ const SYSTEM_PROMPTS = {
     'You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.',
   writer:
     'You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable.',
-  orchestrator:
-    'You are an orchestrator agent. Given a user task and the outputs of research, analyst, and writer agents, summarize what was done and highlight key insights.',
 };
 
-function isTruthy(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-}
+const researchPrice = parsePrice(process.env.RESEARCH_AGENT_PRICE, '0.005');
+const analystPrice = parsePrice(process.env.ANALYST_AGENT_PRICE, '0.003');
+const writerPrice = parsePrice(process.env.WRITER_AGENT_PRICE, '0.008');
 
-const ENFORCE_WALLET_MATCH = isTruthy(process.env.ENFORCE_WALLET_MATCH);
-
-function normalizePrivateKey(raw?: string): `0x${string}` {
-  const value = raw?.trim();
-  if (!value) {
-    throw new Error('PRIVATE_KEY is not set in environment.');
-  }
-  return (value.startsWith('0x') ? value : `0x${value}`) as `0x${string}`;
-}
+const sellerAddress = resolveSellerAddress();
 
 function parsePrice(input: string | undefined, fallback: string): string {
   return `$${(Number(input || fallback) || Number(fallback)).toFixed(3)}`;
+}
+
+function resolveSellerAddress(): Address {
+  const configured = process.env.SELLER_ADDRESS?.trim();
+  if (configured) {
+    if (!isAddress(configured)) {
+      throw new Error('SELLER_ADDRESS is configured but invalid.');
+    }
+    return getAddress(configured);
+  }
+
+  const privateKey = process.env.PRIVATE_KEY?.trim();
+  if (privateKey) {
+    const normalized = (privateKey.startsWith('0x')
+      ? privateKey
+      : `0x${privateKey}`) as `0x${string}`;
+    const account = privateKeyToAccount(normalized);
+    console.warn(
+      `[Boot] SELLER_ADDRESS is not set. Falling back to address derived from PRIVATE_KEY (${account.address}) for seller pay-to only.`,
+    );
+    return account.address;
+  }
+
+  throw new Error(
+    'SELLER_ADDRESS is required when PRIVATE_KEY is not provided. Backend no longer signs buyer payments.',
+  );
 }
 
 function getErrorMessage(err: unknown): string {
@@ -113,7 +131,6 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     const host = url.hostname.toLowerCase();
     if (host === 'localhost' || host === '127.0.0.1') return true;
     if (host.endsWith('.vercel.app')) return true;
-    // Allow custom production domains over HTTPS.
     if (url.protocol === 'https:') return true;
     return false;
   } catch {
@@ -131,13 +148,21 @@ function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
   } else if (!origin) {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   const requestedHeaders = req.headers['access-control-request-headers'];
   if (typeof requestedHeaders === 'string' && requestedHeaders.trim()) {
     res.setHeader('Access-Control-Allow-Headers', requestedHeaders);
   } else {
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Payment-Signature, Authorization',
+    );
   }
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    'PAYMENT-REQUIRED, PAYMENT-RESPONSE, Content-Type',
+  );
 
   if (req.method === 'OPTIONS') {
     if (origin && !allowed) {
@@ -147,16 +172,118 @@ function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
     res.sendStatus(204);
     return;
   }
+
   next();
 }
 
-const sellerAccount = privateKeyToAccount(normalizePrivateKey(process.env.PRIVATE_KEY));
-const sellerAddress: Address =
-  (process.env.SELLER_ADDRESS?.trim() as Address) || sellerAccount.address;
+function parseStep(input: string | undefined): OrchestratorStep | null {
+  if (input === 'research' || input === 'analyst' || input === 'writer') {
+    return input;
+  }
+  return null;
+}
 
-const researchPrice = parsePrice(process.env.RESEARCH_AGENT_PRICE, '0.005');
-const analystPrice = parsePrice(process.env.ANALYST_AGENT_PRICE, '0.003');
-const writerPrice = parsePrice(process.env.WRITER_AGENT_PRICE, '0.008');
+function decodeTransactionFromPaymentResponse(
+  paymentResponseHeader: string | null,
+): string | undefined {
+  if (!paymentResponseHeader) return undefined;
+  try {
+    const decoded = Buffer.from(paymentResponseHeader, 'base64').toString('utf-8');
+    const payload = JSON.parse(decoded) as { transaction?: string };
+    return typeof payload.transaction === 'string' ? payload.transaction : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getAgentUrl(step: OrchestratorStep): string {
+  switch (step) {
+    case 'research':
+      return RESEARCH_URL;
+    case 'analyst':
+      return ANALYST_URL;
+    case 'writer':
+      return WRITER_URL;
+  }
+}
+
+async function proxyAgentRun(params: {
+  step: OrchestratorStep;
+  method: 'GET' | 'POST';
+  body?: unknown;
+  paymentSignature?: string;
+}): Promise<{
+  status: number;
+  data: unknown;
+  contentType: string | null;
+  paymentRequiredHeader: string | null;
+  paymentResponseHeader: string | null;
+}> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (params.paymentSignature) {
+    headers['Payment-Signature'] = params.paymentSignature;
+  }
+
+  const response = await fetch(getAgentUrl(params.step), {
+    method: params.method,
+    headers,
+    body: params.method === 'POST' ? JSON.stringify(params.body ?? {}) : undefined,
+  });
+
+  const contentType = response.headers.get('content-type');
+  const rawBody = await response.text();
+  let data: unknown = rawBody;
+
+  if (rawBody && contentType?.includes('application/json')) {
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      data = rawBody;
+    }
+  }
+
+  return {
+    status: response.status,
+    data,
+    contentType,
+    paymentRequiredHeader: response.headers.get('PAYMENT-REQUIRED'),
+    paymentResponseHeader: response.headers.get('PAYMENT-RESPONSE'),
+  };
+}
+
+async function fetchGatewayBalanceForAddress(address: Address): Promise<{
+  available: string;
+  total: string;
+}> {
+  const response = await fetch(`${GATEWAY_API_BASE_URL}/balances`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: 'USDC',
+      sources: [{ depositor: address, domain: ARC_TESTNET_DOMAIN }],
+    }),
+  });
+
+  const json = (await response.json().catch(() => ({}))) as {
+    balances?: Array<{ balance?: string; withdrawing?: string }>;
+    message?: string;
+    error?: string;
+  };
+
+  if (!response.ok) {
+    const details = json.message || json.error || `HTTP ${response.status}`;
+    throw new Error(`Gateway API balance fetch failed: ${details}`);
+  }
+
+  const first = Array.isArray(json.balances) ? json.balances[0] : undefined;
+  const available = first?.balance ?? '0';
+  const withdrawing = first?.withdrawing ?? '0';
+  const total = (Number(available) + Number(withdrawing)).toString();
+
+  return { available, total };
+}
 
 function createFacilitatorApp(): express.Express {
   const app = express();
@@ -176,7 +303,9 @@ function createFacilitatorApp(): express.Express {
     } catch (err) {
       const details = getErrorMessage(err);
       console.error(`[Facilitator ${rid}] /supported failed`, err);
-      res.status(500).json({ error: 'Internal error during getSupported', details, requestId: rid });
+      res
+        .status(500)
+        .json({ error: 'Internal error during getSupported', details, requestId: rid });
     }
   });
 
@@ -188,19 +317,22 @@ function createFacilitatorApp(): express.Express {
         return res.status(400).json({ error: 'Missing payment data', requestId: rid });
       }
       if (!isBatchPayment(paymentRequirements)) {
-        return res
-          .status(400)
-          .json({ error: 'Only Gateway batched payments are supported', requestId: rid });
+        return res.status(400).json({
+          error: 'Only Gateway batched payments are supported',
+          requestId: rid,
+        });
       }
       const result = await gatewayClient.verify(paymentPayload, paymentRequirements);
       if ('isValid' in result && result.isValid === false) {
-        console.error(`[Facilitator ${rid}] verify failed`, result.errorReason ?? result);
+        console.error(`[Facilitator ${rid}] verify failed`, result.invalidReason ?? result);
       }
       return res.json(result);
     } catch (err) {
       const details = getErrorMessage(err);
       console.error(`[Facilitator ${rid}] /verify failed`, err);
-      return res.status(500).json({ error: 'Internal error during verify', details, requestId: rid });
+      return res
+        .status(500)
+        .json({ error: 'Internal error during verify', details, requestId: rid });
     }
   });
 
@@ -212,9 +344,10 @@ function createFacilitatorApp(): express.Express {
         return res.status(400).json({ error: 'Missing payment data', requestId: rid });
       }
       if (!isBatchPayment(paymentRequirements)) {
-        return res
-          .status(400)
-          .json({ error: 'Only Gateway batched payments are supported', requestId: rid });
+        return res.status(400).json({
+          error: 'Only Gateway batched payments are supported',
+          requestId: rid,
+        });
       }
       const result = await gatewayClient.settle(paymentPayload, paymentRequirements);
       if (!result.success) {
@@ -224,7 +357,9 @@ function createFacilitatorApp(): express.Express {
     } catch (err) {
       const details = getErrorMessage(err);
       console.error(`[Facilitator ${rid}] /settle failed`, err);
-      return res.status(500).json({ error: 'Internal error during settle', details, requestId: rid });
+      return res
+        .status(500)
+        .json({ error: 'Internal error during settle', details, requestId: rid });
     }
   });
 
@@ -247,11 +382,7 @@ function createAgentApp(
     const requestId = createRunId(name);
     const start = Date.now();
     try {
-      const payload = await withTimeout(
-        run(req),
-        AGENT_TIMEOUT_MS,
-        `${name} agent`,
-      );
+      const payload = await withTimeout(run(req), AGENT_TIMEOUT_MS, `${name} agent`);
       console.log(`[Agent ${name} ${requestId}] done in ${Date.now() - start}ms`);
       res.json(payload);
     } catch (err) {
@@ -269,135 +400,11 @@ function createAgentApp(
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', agent: name });
   });
+
   app.get('/run', gateway.require(price), handler);
   app.post('/run', gateway.require(price), handler);
+
   return app;
-}
-
-function createGatewayClientForUser(userAddress?: string): GatewayClient {
-  const privateKey = normalizePrivateKey(process.env.PRIVATE_KEY);
-  const client = new GatewayClient({
-    chain: 'arcTestnet',
-    privateKey,
-  });
-
-  if (userAddress) {
-    if (!isAddress(userAddress)) {
-      throw new Error('userAddress is invalid.');
-    }
-    const normalized = getAddress(userAddress);
-    if (normalized.toLowerCase() !== client.address.toLowerCase() && ENFORCE_WALLET_MATCH) {
-      throw new Error(
-        `Connected wallet ${normalized} does not match backend signer ${client.address}. Configure PRIVATE_KEY to the connected wallet for server-side payments.`,
-      );
-    }
-    if (normalized.toLowerCase() !== client.address.toLowerCase() && !ENFORCE_WALLET_MATCH) {
-      console.warn(
-        `[Gateway] Connected wallet ${normalized} differs from backend signer ${client.address}. Proceeding with backend signer (ENFORCE_WALLET_MATCH=false).`,
-      );
-    }
-  }
-
-  return client;
-}
-
-async function runPipeline(
-  task: string,
-  userAddress: string | undefined,
-  onEvent: (event: StepEvent) => void,
-): Promise<void> {
-  const client = createGatewayClientForUser(userAddress);
-
-  onEvent({ type: 'step_start', step: 'research', price: researchPrice.replace('$', '') });
-  const research = await withTimeout(
-    client.pay<{ task?: string; result?: string }>(RESEARCH_URL, {
-      method: 'POST',
-      body: { task },
-    }),
-    PAYMENT_TIMEOUT_MS,
-    'Research payment',
-  ).catch((err) => {
-    throw Object.assign(new Error(`Research step failed: ${getErrorMessage(err)}`), {
-      step: 'research' as OrchestratorStep,
-    });
-  });
-  onEvent({
-    type: 'step_complete',
-    step: 'research',
-    tx: research.transaction,
-    amount: researchPrice.replace('$', ''),
-  });
-
-  onEvent({ type: 'step_start', step: 'analyst', price: analystPrice.replace('$', '') });
-  const analyst = await withTimeout(
-    client.pay<{ research?: string; result?: string }>(ANALYST_URL, {
-      method: 'POST',
-      body: { research: JSON.stringify(research.data) },
-    }),
-    PAYMENT_TIMEOUT_MS,
-    'Analyst payment',
-  ).catch((err) => {
-    throw Object.assign(new Error(`Analyst step failed: ${getErrorMessage(err)}`), {
-      step: 'analyst' as OrchestratorStep,
-    });
-  });
-  onEvent({
-    type: 'step_complete',
-    step: 'analyst',
-    tx: analyst.transaction,
-    amount: analystPrice.replace('$', ''),
-  });
-
-  onEvent({ type: 'step_start', step: 'writer', price: writerPrice.replace('$', '') });
-  const writer = await withTimeout(
-    client.pay<{ result?: string }>(WRITER_URL, {
-      method: 'POST',
-      body: {
-        research: JSON.stringify(research.data),
-        analysis: JSON.stringify(analyst.data),
-      },
-    }),
-    PAYMENT_TIMEOUT_MS,
-    'Writer payment',
-  ).catch((err) => {
-    throw Object.assign(new Error(`Writer step failed: ${getErrorMessage(err)}`), {
-      step: 'writer' as OrchestratorStep,
-    });
-  });
-  onEvent({
-    type: 'step_complete',
-    step: 'writer',
-    tx: writer.transaction,
-    amount: writerPrice.replace('$', ''),
-  });
-
-  const total =
-    Number(researchPrice.replace('$', '')) +
-    Number(analystPrice.replace('$', '')) +
-    Number(writerPrice.replace('$', ''));
-  onEvent({
-    type: 'receipt',
-    total: total.toFixed(3),
-    researchTx: research.transaction,
-    analystTx: analyst.transaction,
-    writerTx: writer.transaction,
-  });
-
-  const summary = await callHermes(
-    SYSTEM_PROMPTS.orchestrator,
-    JSON.stringify({
-      task,
-      research: research.data,
-      analyst: analyst.data,
-      writer: writer.data,
-      userAddress: userAddress || client.address,
-    }),
-  );
-  onEvent({
-    type: 'report',
-    markdown: writer.data?.result || '',
-    summary,
-  });
 }
 
 function createPublicApp(): express.Express {
@@ -426,18 +433,18 @@ function createPublicApp(): express.Express {
 
   const getBalanceHandler = async (req: Request, res: Response) => {
     try {
-      const client = createGatewayClientForUser();
-      const addressParam = req.query.address as string | undefined;
-      if (addressParam && !isAddress(addressParam)) {
-        return res.status(400).json({ error: 'Invalid address query parameter.' });
+      const addressQuery = req.query.address as string | undefined;
+      if (!addressQuery || !isAddress(addressQuery)) {
+        return res.status(400).json({ error: 'Valid address query parameter is required.' });
       }
-      const targetAddress = addressParam ? getAddress(addressParam) : undefined;
-      const balances = await client.getBalances(targetAddress as Address | undefined);
+
+      const address = getAddress(addressQuery);
+      const balance = await fetchGatewayBalanceForAddress(address);
       return res.json({
-        address: targetAddress ?? client.address,
-        balance: balances.gateway.formattedAvailable,
-        formatted: balances.gateway.formattedAvailable,
-        total: balances.gateway.formattedTotal,
+        address,
+        balance: balance.available,
+        formatted: balance.available,
+        total: balance.total,
         network: NETWORK_NAME,
         chainId: CHAIN_ID,
       });
@@ -449,37 +456,64 @@ function createPublicApp(): express.Express {
   app.get('/balance', getBalanceHandler);
   app.get('/gateway-balance', getBalanceHandler);
 
-  app.post('/deposit', async (req, res) => {
-    try {
-      const client = createGatewayClientForUser();
-      const amount = (req.body?.amount as string) || '1';
-      const depositorRaw = req.body?.depositor as string | undefined;
-      if (depositorRaw) {
-        const depositor = getAddress(depositorRaw);
-        const result = await client.depositFor(amount, depositor);
-        return res.json({
-          success: true,
-          txHash: result.depositTxHash,
-          formattedAmount: result.formattedAmount,
-        });
-      }
-      const result = await client.deposit(amount);
-      return res.json({
-        success: true,
-        txHash: result.depositTxHash,
-        formattedAmount: result.formattedAmount,
-      });
-    } catch (err) {
-      return res
-        .status(500)
-        .json({ error: getErrorMessage(err), success: false });
-    }
+  app.post('/deposit', (_req, res) => {
+    res.status(410).json({
+      success: false,
+      error:
+        'Deposit is now client-side. Use the browser wallet flow (MetaMask approve + depositFor) instead of backend /deposit.',
+    });
   });
 
+  const proxyHandler = async (req: Request, res: Response) => {
+    const step = parseStep(req.params.step);
+    if (!step) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid step. Use research, analyst, or writer.' });
+    }
+
+    const paymentSignature = req.header('Payment-Signature') || undefined;
+    try {
+      const result = await proxyAgentRun({
+        step,
+        method: req.method === 'GET' ? 'GET' : 'POST',
+        body: req.method === 'GET' ? req.query : req.body,
+        paymentSignature,
+      });
+
+      if (result.paymentRequiredHeader) {
+        res.setHeader('PAYMENT-REQUIRED', result.paymentRequiredHeader);
+      }
+      if (result.paymentResponseHeader) {
+        res.setHeader('PAYMENT-RESPONSE', result.paymentResponseHeader);
+      }
+      if (result.contentType) {
+        res.setHeader('Content-Type', result.contentType);
+      }
+
+      if (typeof result.data === 'string') {
+        return res.status(result.status).send(result.data);
+      }
+      return res.status(result.status).json(result.data);
+    } catch (err) {
+      return res.status(500).json({
+        error: `${step} proxy failed`,
+        details: getErrorMessage(err),
+      });
+    }
+  };
+
+  app.get('/agent/:step/run', proxyHandler);
+  app.post('/agent/:step/run', proxyHandler);
+
+  // Simple SSE proxy for a single agent call. Frontend controls orchestration/payment.
   app.post('/run', async (req, res) => {
-    const task = (req.body?.task as string | undefined)?.trim() || '';
-    const userAddress = (req.body?.userAddress as string | undefined)?.trim();
-    const runId = createRunId('run');
+    const step = parseStep((req.body?.step as string | undefined) ?? 'research');
+    const payload = req.body?.payload;
+    const paymentSignature =
+      (req.body?.paymentSignature as string | undefined) ??
+      req.header('Payment-Signature') ??
+      undefined;
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -487,33 +521,65 @@ function createPublicApp(): express.Express {
     // @ts-ignore
     res.flushHeaders?.();
 
-    let disconnected = false;
-    req.on('aborted', () => {
-      disconnected = true;
-    });
-    res.on('close', () => {
-      if (!res.writableEnded) disconnected = true;
-    });
-
-    const sendEvent = (event: StepEvent) => {
-      if (disconnected || res.writableEnded) return;
+    const sendEvent = (event: ProxyEvent) => {
+      if (res.writableEnded) return;
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
 
-    if (!task) {
-      sendEvent({ type: 'error', message: 'Task is required.' });
+    if (!step) {
+      sendEvent({
+        type: 'error',
+        message: 'Invalid step. Use research, analyst, or writer.',
+      });
       res.end();
       return;
     }
 
     try {
-      console.log(`[Public ${runId}] task="${task}" userAddress=${userAddress || 'n/a'}`);
-      await runPipeline(task, userAddress, sendEvent);
+      sendEvent({ type: 'proxy_start', step });
+
+      const result = await proxyAgentRun({
+        step,
+        method: 'POST',
+        body: payload,
+        paymentSignature,
+      });
+
+      if (result.paymentRequiredHeader) {
+        sendEvent({
+          type: 'payment_required',
+          step,
+          paymentRequiredHeader: result.paymentRequiredHeader,
+        });
+      }
+
+      if (result.status >= 400 && result.status !== 402) {
+        sendEvent({
+          type: 'error',
+          step,
+          status: result.status,
+          message:
+            typeof result.data === 'string'
+              ? result.data
+              : getErrorMessage(result.data),
+        });
+      } else {
+        sendEvent({
+          type: 'proxy_response',
+          step,
+          status: result.status,
+          transaction: decodeTransactionFromPaymentResponse(
+            result.paymentResponseHeader,
+          ),
+          data: result.data,
+        });
+      }
     } catch (err) {
-      const message = getErrorMessage(err);
-      const step = (err as { step?: OrchestratorStep }).step;
-      console.error(`[Public ${runId}] pipeline failed`, err);
-      sendEvent({ type: 'error', message, step });
+      sendEvent({
+        type: 'error',
+        step,
+        message: getErrorMessage(err),
+      });
     } finally {
       if (!res.writableEnded) res.end();
     }
@@ -569,6 +635,7 @@ async function start(): Promise<void> {
   });
   publicApp.listen(PUBLIC_PORT, () => {
     console.log(`[Boot] Public API listening on :${PUBLIC_PORT}`);
+    console.log(`[Boot] Seller address for x402 payouts: ${sellerAddress}`);
   });
 }
 
