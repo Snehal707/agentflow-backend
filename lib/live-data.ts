@@ -10,6 +10,7 @@ export async function fetchLiveData(task: string): Promise<string> {
         'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_market_cap=true&include_24hr_change=true',
       );
       const d = await r.json();
+      console.log('[LiveData] Crypto data fetched:', JSON.stringify(d));
       liveData.push('LIVE CRYPTO DATA: ' + JSON.stringify(d));
     }
     const query = encodeURIComponent(task);
@@ -17,6 +18,7 @@ export async function fetchLiveData(task: string): Promise<string> {
       `https://api.duckduckgo.com/?q=${query}&format=json&no_html=1`,
     );
     const d2 = (await r2.json()) as { AbstractText?: string };
+    console.log('[LiveData] DuckDuckGo result:', d2.AbstractText || 'empty');
     if (d2.AbstractText) {
       liveData.push('LATEST INFO: ' + d2.AbstractText);
     }

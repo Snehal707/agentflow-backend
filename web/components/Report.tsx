@@ -126,7 +126,7 @@ export function Report({ markdown }: { markdown?: string | null }) {
               </ul>
             ),
             li: ({ children }) => (
-              <li className="relative pl-4 before:content-['>'] before:absolute before:left-0 before:text-gold before:font-mono text-platinum/90">
+              <li className="relative pl-4 before:content-['▸'] before:absolute before:left-0 before:text-gold before:font-mono text-platinum/90">
                 {children}
               </li>
             ),
