@@ -27,8 +27,8 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const SYSTEM_PROMPT =
-  'You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.';
+const today = new Date().toISOString().split('T')[0];
+const SYSTEM_PROMPT = `Today's date is ${today}. You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.`;
 
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {

@@ -27,8 +27,8 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const SYSTEM_PROMPT =
-  'You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable.';
+const today = new Date().toISOString().split('T')[0];
+const SYSTEM_PROMPT = `Today's date is ${today}. You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable.`;
 
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {

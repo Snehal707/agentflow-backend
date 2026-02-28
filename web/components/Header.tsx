@@ -1,15 +1,25 @@
 "use client";
 
-import { ConnectButton, useConnectModal } from "@rainbow-me/rainbowkit";
+import { useState, useEffect } from "react";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useConnect } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import { ARC_CHAIN_ID, ARC_EXPLORER_URL } from "@/lib/arcChain";
 
-export function Header() {
-  const { address, isConnected } = useAccount();
+interface HeaderProps {
+  showWallet?: boolean;
+}
+
+export function Header({ showWallet = true }: HeaderProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const { address } = useAccount();
   const { error, isError, reset } = useConnect();
   const { openConnectModal } = useConnectModal();
-  const { gatewayBalance, formattedBalance, isLowBalance, isLoading } =
+  const { formattedBalance, isLowBalance, isLoading } =
     useGatewayBalance(address);
 
   const handleRetry = () => {
@@ -18,62 +28,83 @@ export function Header() {
   };
 
   return (
-    <header className="flex flex-wrap justify-between items-center gap-4 mb-8">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-primary/40">
-          AF
+    <header className="flex justify-between items-center py-6 px-8 bg-bg/50 backdrop-blur-md border-b border-white/5 fixed top-0 w-full z-50">
+      <div className="flex items-center gap-2">
+        <div className="w-10 h-10 bg-gradient-to-br from-gold to-gold-dark rounded-lg flex items-center justify-center shadow-lg shadow-gold/20">
+          <span className="font-mono font-bold text-bg text-xl">AF</span>
         </div>
-        <div>
-          <h1 className="text-xl font-semibold tracking-wide">AgentFlow</h1>
-          <p className="text-sm text-[var(--muted)]">
-            Autonomous AI agents. Instant payments. Zero gas.
-          </p>
-        </div>
+        <span className="text-xl font-bold text-platinum tracking-wider">
+          AGENT<span className="text-gold">FLOW</span>
+        </span>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-full bg-black/40 border border-white/10">
-          <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />
-          <div>
-            <div className="text-sm font-medium">Arc Testnet · Chain ID {ARC_CHAIN_ID}</div>
+      {showWallet && mounted && (
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex items-center gap-3 px-4 py-2 rounded-full bg-bg-tertiary border border-white/5">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+              <span className="text-xs font-mono text-platinum/80">
+                Arc Testnet
+              </span>
+            </div>
+            <div className="h-4 w-px bg-white/10" />
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-platinum/80">
+                Balance:
+              </span>
+              <span
+                className={`text-sm font-mono font-bold ${
+                  isLowBalance ? "text-danger" : "text-gold"
+                }`}
+              >
+                {isLoading ? "..." : `${formattedBalance} USDC`}
+              </span>
+            </div>
             <a
               href={ARC_EXPLORER_URL}
               target="_blank"
               rel="noreferrer"
-              className="text-xs text-accent hover:underline"
+              className="text-[10px] text-platinum-muted hover:text-gold transition-colors ml-1"
             >
-              View on Arcscan
+              Arcscan
             </a>
           </div>
-        </div>
 
-        <div className="px-3 py-2 rounded-lg bg-black/40 border border-white/10">
-          <div className="text-xs text-[var(--muted)]">Gateway balance</div>
-          <div
-            className={`text-sm font-medium ${
-              isLowBalance ? "text-[var(--danger)]" : "text-[var(--success)]"
-            }`}
-          >
-            {isLoading ? "..." : `${formattedBalance} USDC`}
-          </div>
-        </div>
+          {isError && error && (
+            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-danger/10 border border-danger/30 font-mono">
+              <span className="text-xs text-danger flex-1">
+                ERR: {error.message}
+              </span>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="px-2 py-1 text-xs font-bold rounded bg-danger/20 hover:bg-danger/40 text-danger transition-colors"
+              >
+                RETRY
+              </button>
+            </div>
+          )}
 
-        {isError && error && (
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--danger)]/20 border border-[var(--danger)]/50">
-            <span className="text-sm text-[var(--danger)] flex-1">
-              {error.message}
-            </span>
-            <button
-              type="button"
-              onClick={handleRetry}
-              className="px-3 py-1 text-sm font-medium rounded-md bg-[var(--danger)]/30 hover:bg-[var(--danger)]/50 transition-colors"
-            >
-              Try again
-            </button>
-          </div>
-        )}
-        <ConnectButton />
-      </div>
+          <ConnectButton.Custom>
+            {({
+              openConnectModal: openConnect,
+              openAccountModal,
+              mounted: rkMounted,
+              account,
+            }) => {
+              const ready = rkMounted;
+              return (
+                <button
+                  onClick={ready && account ? openAccountModal : openConnect}
+                  className="px-6 py-2.5 rounded-lg bg-gold text-bg font-bold text-sm hover:bg-gold-light transition-all shadow-lg shadow-gold/20"
+                >
+                  {ready && account ? account.displayName : "Connect Wallet"}
+                </button>
+              );
+            }}
+          </ConnectButton.Custom>
+        </div>
+      )}
     </header>
   );
 }

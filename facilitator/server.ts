@@ -65,10 +65,10 @@ app.post('/v1/x402/verify', async (req: Request, res: Response) => {
     }
     console.log(`[Facilitator ${rid}] verify start`);
     const result = await gatewayClient.verify(paymentPayload, paymentRequirements);
-    if (!result.success) {
+    if (!result.isValid) {
       console.error(
         `[Facilitator ${rid}] verify failed`,
-        result.errorReason ?? result,
+        result.invalidReason ?? result,
       );
     } else {
       console.log(`[Facilitator ${rid}] verify success`);

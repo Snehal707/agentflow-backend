@@ -9,12 +9,9 @@ const hermes = new OpenAI({
 });
 
 export async function callHermes(systemPrompt: string, userMessage: string) {
-  if (!process.env.HERMES_MODEL) {
-    throw new Error('HERMES_MODEL is not set in environment');
-  }
-
+  const model = process.env.HERMES_MODEL || 'Hermes-4-405B';
   const response = await hermes.chat.completions.create({
-    model: process.env.HERMES_MODEL,
+    model,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },

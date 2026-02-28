@@ -158,134 +158,133 @@ export function Onboarding() {
   if (allDone) return null;
 
   return (
-    <div className="rounded-xl bg-gradient-to-br from-[var(--surface)] to-black/60 border border-white/10 p-5 mb-6">
-      <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted)] mb-4">
-        4-Step Onboarding
-      </h3>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="rounded-xl p-0 mb-0 relative z-10">
+      <div className="grid grid-cols-2 gap-4">
         <div
-          className={`p-4 rounded-lg border ${
+          className={`p-5 rounded-xl border font-mono transition-colors ${
             step1Done
-              ? "border-[var(--success)]/50 bg-[var(--success)]/5"
-              : "border-white/10"
+              ? "border-success/30 bg-success/5"
+              : "border-white/10 bg-bg-tertiary/80"
           }`}
         >
-          <div className="text-xs font-medium text-[var(--muted)] mb-1">
-            Step 1
+          <div className="text-[10px] text-platinum-muted mb-2 flex justify-between">
+            <span>SEQ_01</span>
+            {step1Done && <span className="text-success">[OK]</span>}
           </div>
-          <div className="text-sm font-medium">
-            {step1Done ? "Connected MetaMask" : "Connect MetaMask"}
+          <div className="text-sm font-bold text-platinum mb-2">
+            {step1Done ? "Wallet Linked" : "Connect Wallet"}
           </div>
-          <p className="text-xs text-[var(--muted)] mt-1">
-            Use the Connect button above
-          </p>
         </div>
 
         <div
-          className={`p-4 rounded-lg border ${
+          className={`p-5 rounded-xl border font-mono transition-colors ${
             step2Done
-              ? "border-[var(--success)]/50 bg-[var(--success)]/5"
-              : "border-white/10"
+              ? "border-success/30 bg-success/5"
+              : "border-white/10 bg-bg-tertiary/80"
           }`}
         >
-          <div className="text-xs font-medium text-[var(--muted)] mb-1">
-            Step 2
+          <div className="text-[10px] text-platinum-muted mb-2 flex justify-between">
+            <span>SEQ_02</span>
+            {step2Done && <span className="text-success">[OK]</span>}
           </div>
-          <div className="text-sm font-medium">
-            {step2Done ? "Arc Testnet selected" : "Switch to Arc Testnet"}
+          <div className="text-sm font-bold text-platinum mb-2">
+            {step2Done ? "Network Synced" : "Switch to Arc"}
           </div>
           {!step2Done && (
             <button
               onClick={handleAddAndSwitchToArc}
               disabled={isSwitchPending}
-              className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+              className="mt-2 w-full text-xs px-3 py-2 rounded bg-bg-tertiary border border-gold/50 text-gold hover:bg-gold hover:text-bg transition-colors disabled:opacity-50"
             >
-              {isSwitchPending ? "Switching..." : "Switch Network"}
+              {isSwitchPending ? "SYNCING..." : "EXECUTE SWITCH"}
             </button>
           )}
         </div>
 
-        <div className="p-4 rounded-lg border border-white/10">
-          <div className="text-xs font-medium text-[var(--muted)] mb-1">
-            Step 3
+        <div className="p-5 rounded-xl border border-white/10 bg-bg-tertiary/80 font-mono">
+          <div className="text-[10px] text-platinum-muted mb-2 flex justify-between">
+            <span>SEQ_03</span>
           </div>
-          <div className="text-sm font-medium">Get testnet USDC</div>
+          <div className="text-sm font-bold text-platinum mb-2">Get Test USDC</div>
           <a
             href={CIRCLE_FAUCET_URL}
             target="_blank"
             rel="noreferrer"
-            className="mt-2 inline-block text-xs px-3 py-1.5 rounded-lg bg-accent/20 text-accent hover:bg-accent/30"
+            className="mt-2 block text-center text-xs px-3 py-2 rounded bg-bg-tertiary border border-gold/50 text-gold hover:bg-gold hover:text-bg transition-colors"
           >
-            Open Faucet
+            OPEN FAUCET
           </a>
         </div>
 
         <div
-          className={`p-4 rounded-lg border ${
+          className={`p-5 rounded-xl border font-mono transition-colors ${
             step4Done
-              ? "border-[var(--success)]/50 bg-[var(--success)]/5"
-              : "border-white/10"
+              ? "border-success/30 bg-success/5"
+              : "border-white/10 bg-bg-tertiary/80"
           }`}
         >
-          <div className="text-xs font-medium text-[var(--muted)] mb-1">
-            Step 4
+          <div className="text-[10px] text-platinum-muted mb-2 flex justify-between">
+            <span>SEQ_04</span>
+            {step4Done && <span className="text-success">[OK]</span>}
           </div>
-          <div className="text-sm font-medium">
-            {step4Done ? "Gateway funded" : "Deposit to Gateway"}
+          <div className="text-sm font-bold text-platinum mb-2">
+            {step4Done ? "Gateway Funded" : "Fund Gateway"}
           </div>
           {!step4Done && (
-            <div className="mt-2 flex gap-2 items-center">
+            <div className="mt-2 flex gap-2">
               <input
                 type="text"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(e.target.value)}
                 placeholder="1"
-                className="w-16 px-2 py-1 rounded bg-black/40 border border-white/10 text-sm"
+                className="w-16 px-2 py-1.5 rounded bg-bg border border-white/20 text-platinum text-sm focus:outline-none focus:border-gold/50"
               />
               <button
                 onClick={handleDeposit}
                 disabled={depositStatus === "pending"}
-                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                className="flex-1 text-xs px-2 py-1.5 rounded bg-gold text-bg font-bold hover:bg-gold-light disabled:opacity-50"
               >
-                {depositStatus === "pending" ? "Confirm in wallet..." : "Deposit"}
+                {depositStatus === "pending" ? "AWAIT..." : "DEPOSIT"}
               </button>
             </div>
           )}
           {depositStatus === "success" && depositTxHash && (
-            <p className="text-xs text-[var(--success)] mt-1">
-              Deposited.{" "}
+            <p className="text-[10px] text-success mt-2 truncate">
+              TX:{" "}
               <a
                 href={`${ARC_EXPLORER_URL}/tx/${depositTxHash}`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-accent hover:underline"
+                className="underline hover:text-platinum"
               >
-                View on Arcscan
+                {depositTxHash.slice(0, 10)}...
               </a>
             </p>
           )}
           {depositError && (
-            <p className="text-xs text-[var(--danger)] mt-1">{depositError}</p>
+            <p className="text-[10px] text-danger mt-2 leading-tight">
+              {depositError}
+            </p>
           )}
         </div>
       </div>
 
       {!isOnArc && isConnected && (
-        <div className="mt-4 p-3 rounded-lg bg-[var(--danger)]/10 border border-[var(--danger)]/30 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--danger)]">
-              Wrong network. Switch to Arc Testnet to continue.
-            </span>
-            <button
-              onClick={handleAddAndSwitchToArc}
-              disabled={isSwitchPending}
-              className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
-            </button>
-          </div>
+        <div className="mt-4 p-4 rounded-lg bg-danger/10 border border-danger/30 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono">
+          <span className="text-xs text-danger">
+            [WARN] Network mismatch. Handshake required with Arc Testnet.
+          </span>
+          <button
+            onClick={handleAddAndSwitchToArc}
+            disabled={isSwitchPending}
+            className="px-4 py-2 rounded bg-danger/20 text-danger text-xs font-bold hover:bg-danger hover:text-white transition-colors disabled:opacity-50"
+          >
+            {isSwitchPending ? "PROCESSING..." : "FORCE SYNC"}
+          </button>
           {switchError && (
-            <p className="text-xs text-[var(--danger)]">{switchError}</p>
+            <p className="text-[10px] text-danger w-full sm:w-auto">
+              {switchError}
+            </p>
           )}
         </div>
       )}

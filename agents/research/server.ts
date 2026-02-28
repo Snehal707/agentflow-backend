@@ -28,8 +28,8 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const SYSTEM_PROMPT =
-  'You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON.';
+const today = new Date().toISOString().split('T')[0];
+const SYSTEM_PROMPT = `Today's date is ${today}. You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON.`;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {

@@ -48,13 +48,11 @@ const WRITER_URL = `http://127.0.0.1:${WRITER_PORT}/run`;
 
 const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || 80_000);
 
+const today = new Date().toISOString().split('T')[0];
 const SYSTEM_PROMPTS = {
-  research:
-    'You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON.',
-  analyst:
-    'You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.',
-  writer:
-    'You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable.',
+  research: `Today's date is ${today}. You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON.`,
+  analyst: `Today's date is ${today}. You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON.`,
+  writer: `Today's date is ${today}. You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable.`,
 };
 
 const researchPrice = parsePrice(process.env.RESEARCH_AGENT_PRICE, '0.005');

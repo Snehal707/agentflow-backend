@@ -20,6 +20,7 @@
     "dev:orchestrator": "tsx orchestrator/index.ts",
     "script:deposit": "tsx scripts/deposit.ts",
     "script:check-balances": "tsx scripts/check-balances.ts",
+    "script:pre-launch": "tsx scripts/pre-launch-checks.ts",
     "pack-frontend": "node scripts/pack-frontend.js",
     "gen:seller-address": "node -e \"const { privateKeyToAccount } = require('viem/accounts'); const pk = '0x' + require('crypto').randomBytes(32).toString('hex'); const a = privateKeyToAccount(pk); console.log('Add to .env:\\nSELLER_ADDRESS=' + a.address);\"",
     "lint": "echo \"No linter configured\""
