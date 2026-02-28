@@ -211,8 +211,14 @@ app.post('/run', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`AgentFlow UI listening on http://localhost:${PORT}`);
+  console.log(
+    `[Boot] AgentFlow UI listening on :${PORT} (PORT=${process.env.PORT || 'unset'}, UI_PORT=${process.env.UI_PORT || 'unset'})`,
+  );
+});
+
+server.on('error', (err) => {
+  console.error('[Boot] UI server failed to start:', err);
 });
 
