@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createGatewayMiddleware } from '@circlefin/x402-batching/server';
 import { callHermes } from '../../lib/hermes';
+import { fetchLiveData } from '../../lib/live-data';
 
 dotenv.config();
 
@@ -28,8 +29,7 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const today = new Date().toISOString().split('T')[0];
-const SYSTEM_PROMPT = `Today's date is ${today}. You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON. IMPORTANT: You do not have access to real-time data. For any current prices, market caps, or live statistics, explicitly state: [Note: This figure is based on training data and may not reflect current values. Please verify with live sources.] Do NOT start any line or sentence with the > symbol. Do NOT use blockquote formatting. Write in clean plain paragraphs.`;
+const SYSTEM_PROMPT = `You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON. When the user message includes LIVE DATA, use it for current figures. Do not use training data for prices or recent events when live data is provided. CRITICAL: Never start any line with >. Never use blockquote formatting. Write in clean plain paragraphs.`;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -72,8 +72,12 @@ const runHandler = async (req: express.Request, res: express.Response) => {
     console.log(
       `[Research ${requestId}] ${req.method} /run taskLength=${task.length}`,
     );
+    const liveData = await fetchLiveData(task);
+    const userMessage = liveData
+      ? `LIVE DATA (${new Date().toISOString()}):\n${liveData}\n\nUSER TASK: ${task}\n\nUse the LIVE DATA above for current figures. Do not use training data for prices or recent events.`
+      : task;
     const result = await withTimeout(
-      callHermes(SYSTEM_PROMPT, task),
+      callHermes(SYSTEM_PROMPT, userMessage),
       HERMES_TIMEOUT_MS,
       `Hermes timed out after ${HERMES_TIMEOUT_MS / 1000}s`,
     );
