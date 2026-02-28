@@ -13,7 +13,8 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const PORT = Number(process.env.UI_PORT) || 4000;
+const PORT =
+  Number(process.env.PORT) || Number(process.env.UI_PORT) || 4000;
 
 // CORS for Next.js frontend
 app.use((_req, res, next) => {

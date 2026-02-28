@@ -38,16 +38,16 @@ export function Onboarding() {
           depositor: address || undefined,
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Deposit failed");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as { error?: string }).error || "Deposit failed");
       setDepositStatus("success");
       refetch();
     } catch (e) {
       const message =
         e instanceof Error ? e.message : "Deposit failed";
-      if (message === "Failed to fetch") {
+      if (message === "Failed to fetch" || message === "Deposit failed") {
         setDepositError(
-          `Failed to reach backend (${BACKEND_URL}). Check NEXT_PUBLIC_BACKEND_URL, HTTPS, and backend CORS.`,
+          `Cannot reach backend at ${BACKEND_URL}. Check that NEXT_PUBLIC_BACKEND_URL is set (e.g. your Railway URL) and the backend is running.`,
         );
       } else {
         setDepositError(message);

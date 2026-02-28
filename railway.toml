@@ -1,0 +1,9 @@
+# Railway deploy config for AgentFlow backend (UI API only)
+# This service runs the Express UI server: /deposit, /run, /gateway-balance, /health
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm start"
+# Railway sets PORT automatically; app uses process.env.PORT (see ui/server.ts)
+# In Networking, set exposed port to match (e.g. 4000 if you set PORT=4000 in Variables)

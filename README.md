@@ -211,7 +211,9 @@ AgentFlow includes a Next.js 14 app in `web/` with RainbowKit wallet connection,
 
 5. Connect your wallet (MetaMask), switch to Arc Testnet, and follow the 4-step onboarding. The Deposit button funds the Gateway balance. Run AgentFlow to stream the agent pipeline and see the final report.
 
-**Vercel deployment:** Deploy the `web/` folder as a Next.js project. Set `NEXT_PUBLIC_BACKEND_URL` to your deployed backend URL (e.g. `https://agentflow-api.yourdomain.com`).
+**Vercel deployment:** Deploy the `web/` folder as a Next.js project. Set `NEXT_PUBLIC_BACKEND_URL` to your deployed backend URL (e.g. your Railway URL). **Step-by-step:** see [PHASE_D_VERCEL.md](PHASE_D_VERCEL.md).
+
+**Railway / Nixpacks:** If you deploy the full repo (root), the build runs `npm ci`, which needs the private registry. Set **`CLOUDSMITH_TOKEN`** in your Railway (or platform) **Variables** so it is available at **build time**. Otherwise you get `npm error E401`. See [DEPLOY.md](DEPLOY.md).
 
 ### 11. Arc Testnet key facts
 

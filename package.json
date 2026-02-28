@@ -5,7 +5,7 @@
   "description": "AgentFlow — Autonomous AI agents. Instant payments. Zero gas. Arc Testnet + Circle x402.",
   "main": "dist/index.js",
   "scripts": {
-    "start": "tsx server.ts",
+    "start": "tsx ui/server.ts",
     "setup": "node scripts/setup.js",
     "setup:ps": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "build": "echo \"Skipping compile step (runtime uses tsx server.ts)\"",
@@ -20,6 +20,7 @@
     "dev:orchestrator": "tsx orchestrator/index.ts",
     "script:deposit": "tsx scripts/deposit.ts",
     "script:check-balances": "tsx scripts/check-balances.ts",
+    "pack-frontend": "node scripts/pack-frontend.js",
     "gen:seller-address": "node -e \"const { privateKeyToAccount } = require('viem/accounts'); const pk = '0x' + require('crypto').randomBytes(32).toString('hex'); const a = privateKeyToAccount(pk); console.log('Add to .env:\\nSELLER_ADDRESS=' + a.address);\"",
     "lint": "echo \"No linter configured\""
   },
