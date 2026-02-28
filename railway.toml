@@ -2,6 +2,10 @@
 # This service runs the Express UI server: /deposit, /run, /gateway-balance, /health
 [build]
 builder = "nixpacks"
+# Nixpacks behavior is customized via nixpacks.toml:
+# - installs dev dependencies (needed for tsx runtime)
+# - uses Node 20
+# - runs npm run build
 
 [deploy]
 startCommand = "npm start"
