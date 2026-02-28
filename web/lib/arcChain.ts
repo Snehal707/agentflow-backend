@@ -25,6 +25,7 @@ export const arcTestnet = defineChain({
 });
 
 export const ARC_CHAIN_ID = 5042002;
+export const ARC_CHAIN_ID_HEX = "0x4CEF12";
 export const ARC_EXPLORER_URL = "https://testnet.arcscan.app";
 export const CIRCLE_FAUCET_URL = "https://faucet.circle.com";
 export const ARC_GATEWAY_DOMAIN = 26;

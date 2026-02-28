@@ -12,10 +12,20 @@ import { getAddress, parseUnits } from "viem";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import {
   ARC_CHAIN_ID,
+  ARC_CHAIN_ID_HEX,
+  ARC_EXPLORER_URL,
   ARC_USDC_ADDRESS,
   CIRCLE_FAUCET_URL,
   GATEWAY_WALLET_ADDRESS,
 } from "@/lib/arcChain";
+
+const ARC_ADD_CHAIN_PARAMS = {
+  chainId: ARC_CHAIN_ID_HEX,
+  chainName: "Arc Testnet",
+  rpcUrls: ["https://rpc.testnet.arc.network"],
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+  blockExplorerUrls: ["https://testnet.arcscan.app"],
+};
 
 const erc20Abi = [
   {
@@ -66,8 +76,38 @@ export function Onboarding() {
     "idle" | "pending" | "success" | "error"
   >("idle");
   const [depositError, setDepositError] = useState<string | null>(null);
+  const [depositTxHash, setDepositTxHash] = useState<string | null>(null);
+  const [addChainPending, setAddChainPending] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
 
   const isOnArc = chainId === ARC_CHAIN_ID;
+
+  const handleAddAndSwitchToArc = async () => {
+    const provider = (typeof window !== "undefined" &&
+      (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum) as
+      | { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+      | undefined;
+    if (!provider) {
+      setSwitchError("No wallet found. Install MetaMask.");
+      return;
+    }
+    setAddChainPending(true);
+    setSwitchError(null);
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [ARC_ADD_CHAIN_PARAMS],
+      });
+      await switchChain?.({ chainId: ARC_CHAIN_ID });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to add or switch network";
+      if (!msg.toLowerCase().includes("rejected") && !msg.toLowerCase().includes("user denied")) {
+        setSwitchError(msg);
+      }
+    } finally {
+      setAddChainPending(false);
+    }
+  };
   const step1Done = isConnected;
   const step2Done = isOnArc;
   const step3Done = true;
@@ -77,6 +117,7 @@ export function Onboarding() {
   const handleDeposit = async () => {
     setDepositStatus("pending");
     setDepositError(null);
+    setDepositTxHash(null);
     try {
       if (!address) {
         throw new Error("Connect your wallet first.");
@@ -122,6 +163,7 @@ export function Onboarding() {
       });
       await publicClient.waitForTransactionReceipt({ hash: depositTx });
 
+      setDepositTxHash(depositTx);
       setDepositStatus("success");
       refetch();
     } catch (e) {
@@ -179,11 +221,11 @@ export function Onboarding() {
           </div>
           {!step2Done && (
             <button
-              onClick={() => switchChain?.({ chainId: ARC_CHAIN_ID })}
-              disabled={isSwitchPending}
+              onClick={handleAddAndSwitchToArc}
+              disabled={isSwitchPending || addChainPending}
               className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
             >
-              {isSwitchPending ? "Switching..." : "Switch Network"}
+              {isSwitchPending || addChainPending ? "Switching..." : "Switch Network"}
             </button>
           )}
         </div>
@@ -234,6 +276,19 @@ export function Onboarding() {
               </button>
             </div>
           )}
+          {depositStatus === "success" && depositTxHash && (
+            <p className="text-xs text-[var(--success)] mt-1">
+              Deposited.{" "}
+              <a
+                href={`${ARC_EXPLORER_URL}/tx/${depositTxHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                View on Arcscan
+              </a>
+            </p>
+          )}
           {depositError && (
             <p className="text-xs text-[var(--danger)] mt-1">{depositError}</p>
           )}
@@ -241,17 +296,22 @@ export function Onboarding() {
       </div>
 
       {!isOnArc && isConnected && (
-        <div className="mt-4 p-3 rounded-lg bg-[var(--danger)]/10 border border-[var(--danger)]/30 flex items-center justify-between">
-          <span className="text-sm text-[var(--danger)]">
-            Wrong network. Switch to Arc Testnet to continue.
-          </span>
-          <button
-            onClick={() => switchChain?.({ chainId: ARC_CHAIN_ID })}
-            disabled={isSwitchPending}
-            className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90"
-          >
-            Switch to Arc Testnet
-          </button>
+        <div className="mt-4 p-3 rounded-lg bg-[var(--danger)]/10 border border-[var(--danger)]/30 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--danger)]">
+              Wrong network. Switch to Arc Testnet to continue.
+            </span>
+            <button
+              onClick={handleAddAndSwitchToArc}
+              disabled={isSwitchPending || addChainPending}
+              className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+            >
+              {isSwitchPending || addChainPending ? "Switching..." : "Switch to Arc Testnet"}
+            </button>
+          </div>
+          {switchError && (
+            <p className="text-xs text-[var(--danger)]">{switchError}</p>
+          )}
         </div>
       )}
     </div>
