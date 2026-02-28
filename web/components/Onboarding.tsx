@@ -5,7 +5,6 @@ import {
   useAccount,
   useChainId,
   usePublicClient,
-  useSwitchChain,
   useWalletClient,
 } from "wagmi";
 import { getAddress, parseUnits } from "viem";
@@ -98,7 +97,7 @@ export function Onboarding() {
         method: "wallet_addEthereumChain",
         params: [ARC_ADD_CHAIN_PARAMS],
       });
-      await switchChain?.({ chainId: ARC_CHAIN_ID });
+      // wallet_addEthereumChain adds + switches when user approves; no switchChain needed
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to add or switch network";
       if (!msg.toLowerCase().includes("rejected") && !msg.toLowerCase().includes("user denied")) {
@@ -222,10 +221,10 @@ export function Onboarding() {
           {!step2Done && (
             <button
               onClick={handleAddAndSwitchToArc}
-              disabled={isSwitchPending || addChainPending}
+              disabled={addChainPending}
               className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
             >
-              {isSwitchPending || addChainPending ? "Switching..." : "Switch Network"}
+              {addChainPending ? "Switching..." : "Switch Network"}
             </button>
           )}
         </div>
@@ -303,10 +302,10 @@ export function Onboarding() {
             </span>
             <button
               onClick={handleAddAndSwitchToArc}
-              disabled={isSwitchPending || addChainPending}
+              disabled={addChainPending}
               className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
             >
-              {isSwitchPending || addChainPending ? "Switching..." : "Switch to Arc Testnet"}
+              {addChainPending ? "Switching..." : "Switch to Arc Testnet"}
             </button>
           </div>
           {switchError && (
