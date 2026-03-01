@@ -87,8 +87,6 @@ export function Onboarding() {
   const step2Done = isOnArc;
   const step3Done = true;
   const step4Done = !isLowBalance && gatewayBalance >= 0.016;
-  const allDone = step1Done && step2Done && step4Done;
-
   const handleDeposit = async () => {
     setDepositStatus("pending");
     setDepositError(null);
@@ -154,8 +152,6 @@ export function Onboarding() {
       setDepositStatus("error");
     }
   };
-
-  if (allDone) return null;
 
   return (
     <div className="rounded-xl p-0 mb-0 relative z-10">
@@ -230,24 +226,22 @@ export function Onboarding() {
           <div className="text-sm font-bold text-platinum mb-2">
             {step4Done ? "Gateway Funded" : "Fund Gateway"}
           </div>
-          {!step4Done && (
-            <div className="mt-2 flex gap-2">
-              <input
-                type="text"
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                placeholder="1"
-                className="w-16 px-2 py-1.5 rounded bg-bg border border-white/20 text-platinum text-sm focus:outline-none focus:border-gold/50"
-              />
-              <button
-                onClick={handleDeposit}
-                disabled={depositStatus === "pending"}
-                className="flex-1 text-xs px-2 py-1.5 rounded bg-gold text-bg font-bold hover:bg-gold-light disabled:opacity-50"
-              >
-                {depositStatus === "pending" ? "AWAIT..." : "DEPOSIT"}
-              </button>
-            </div>
-          )}
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={depositAmount}
+              onChange={(e) => setDepositAmount(e.target.value)}
+              placeholder="1"
+              className="w-16 px-2 py-1.5 rounded bg-bg border border-white/20 text-platinum text-sm focus:outline-none focus:border-gold/50"
+            />
+            <button
+              onClick={handleDeposit}
+              disabled={depositStatus === "pending"}
+              className="flex-1 text-xs px-2 py-1.5 rounded bg-gold text-bg font-bold hover:bg-gold-light disabled:opacity-50"
+            >
+              {depositStatus === "pending" ? "AWAIT..." : step4Done ? "DEPOSIT MORE" : "DEPOSIT"}
+            </button>
+          </div>
           {depositStatus === "success" && depositTxHash && (
             <p className="text-[10px] text-success mt-2 truncate">
               TX:{" "}
