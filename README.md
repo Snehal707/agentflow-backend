@@ -45,7 +45,8 @@ flowchart LR
   A -->|+ analysis| W
   W -->|report| API
   API -->|SSE + report| User
-  Fac <- ->|USDC micropayments| Arc
+  Fac -->|USDC micropayments| Arc
+  Arc -->|settle| Fac
 ```
 
 ### 1. Project structure
