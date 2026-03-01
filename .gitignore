@@ -7,3 +7,4 @@ web/out
 .DS_Store
 *.log
 .cursor-skill
+agentflow-frontend
