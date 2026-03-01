@@ -2,6 +2,33 @@
 
 Next.js 14 app with RainbowKit wallet connection, Arc Testnet support, and SSE streaming from the AgentFlow backend.
 
+### App flow
+
+```mermaid
+flowchart TB
+  subgraph User["Browser"]
+    Wallet[RainbowKit / Wallet]
+    Onboard[Onboarding]
+    Pipeline[Agent Pipeline]
+    Report[Report]
+    Receipt[Receipt]
+  end
+
+  subgraph Backend["Backend API"]
+    Run[POST /run]
+    Balance[GET /gateway-balance]
+    Deposit[POST /deposit]
+  end
+
+  Wallet --> Onboard
+  Onboard --> Pipeline
+  Pipeline -->|SSE stream| Run
+  Pipeline --> Report
+  Pipeline --> Receipt
+  Onboard --> Deposit
+  Pipeline --> Balance
+```
+
 ## Setup
 
 1. Copy `.env.local.example` to `.env.local`:

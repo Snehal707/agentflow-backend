@@ -12,6 +12,42 @@ The high-level flow is:
 
 User → AgentFlow Orchestrator → pays 3 agents via x402 → returns report + receipt + web UI
 
+### Architecture
+
+```mermaid
+flowchart LR
+  subgraph Client
+    User[User / Web UI]
+  end
+
+  subgraph Backend["AgentFlow Backend"]
+    API[Public API :4000]
+    Fac[Facilitator :3000]
+    R[Research :3001]
+    A[Analyst :3002]
+    W[Writer :3003]
+  end
+
+  subgraph External
+    Hermes[Hermes LLM]
+    Arc[Arc Testnet / x402]
+  end
+
+  User -->|POST /run, task| API
+  API --> Fac
+  Fac -->|pay x402| R
+  Fac -->|pay x402| A
+  Fac -->|pay x402| W
+  R --> Hermes
+  A --> Hermes
+  W --> Hermes
+  R -->|research JSON| A
+  A -->|+ analysis| W
+  W -->|report| API
+  API -->|SSE + report| User
+  Fac <- ->|USDC micropayments| Arc
+```
+
 ### 1. Project structure
 
 ```text
@@ -52,7 +88,7 @@ agentflow/
 - npm **v8+**
 - **Arc Testnet** USDC test funds (via Circle faucet)
 - **Cloudsmith** entitlement token (`CLOUDSMITH_TOKEN`) for `@circlefin/*`
-- **Hermes LLM** API key + base URL (OpenAI-compatible)
+- **Hermes** (Nous Research) LLM API key + base URL (OpenAI-compatible; default model: Hermes-4-405B)
 
 ### 3. Private registry setup (required)
 
