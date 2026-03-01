@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3005.
 
 ## Build for production
 
@@ -32,7 +32,7 @@ npm start
 
 ## Vercel deployment
 
-1. Deploy the `web/` folder as a Next.js project on Vercel.
+1. Deploy this folder (or the agentflow-frontend repo) as a Next.js project on Vercel.
 2. Set environment variable: `NEXT_PUBLIC_BACKEND_URL` = your backend URL.
 3. Optionally set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`.
 
