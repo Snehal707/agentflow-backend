@@ -23,6 +23,7 @@ agentflow/
 ├── tsconfig.json
 ├── lib/
 │   ├── hermes.ts              # OpenAI-compatible Hermes helper
+│   ├── live-data.ts           # Live crypto + DuckDuckGo data for research
 │   └── orchestrator.ts        # Shared orchestrator logic + events
 ├── agents/
 │   ├── research/
