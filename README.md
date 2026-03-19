@@ -90,6 +90,9 @@ agentflow/
 - **Arc Testnet** USDC test funds (via Circle faucet)
 - **Cloudsmith** entitlement token (`CLOUDSMITH_TOKEN`) for `@circlefin/*`
 - **Hermes** (Nous Research) LLM API key + base URL (OpenAI-compatible; default model: Hermes-4-405B)
+ - **Circle developer-controlled wallets**:
+  - `CIRCLE_API_KEY` and `CIRCLE_ENTITY_SECRET` for the Circle Developer-Controlled Wallets SDK
+  - optional `CIRCLE_WALLET_SET_ID` for the AgentFlow wallet set (auto-created on first run if not set)
 
 ### 3. Private registry setup (required)
 
@@ -145,6 +148,7 @@ Key variables (see `cursorrules` for full list):
 - `PRIVATE_KEY` — EVM wallet private key (use the same wallet you connect in the web app)
 - `CLOUDSMITH_TOKEN` — Cloudsmith registry token
 - `HERMES_API_KEY`, `HERMES_BASE_URL`, `HERMES_MODEL`
+- `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_WALLET_SET_ID` (optional) — Circle developer-controlled wallets config. You can bootstrap these by first setting `CIRCLE_API_KEY` in `.env` and then running `npx tsx scripts/setup-circle.ts` (or `npm run script:setup-circle`), which will register a new entity secret with Circle, create the `AgentFlow` wallet set, and append `CIRCLE_ENTITY_SECRET` / `CIRCLE_WALLET_SET_ID` to `.env`.
 - `RESEARCH_AGENT_URL`, `ANALYST_AGENT_URL`, `WRITER_AGENT_URL`
 - `RESEARCH_AGENT_PRICE`, `ANALYST_AGENT_PRICE`, `WRITER_AGENT_PRICE`
 
@@ -261,7 +265,28 @@ AgentFlow includes a Next.js 14 app in `web/` with RainbowKit wallet connection,
 - Chain ID: `5042002` · RPC: `https://rpc.testnet.arc.network`
 - Explorer: `https://testnet.arcscan.app`
 
-### 12. Notes & gotchas
+### 12. Circle dev-controlled wallets & auto Gateway funding (Phase 2–3)
+
+- On first connection, AgentFlow creates (or reuses) a **Circle developer-controlled wallet** for the user on Arc Testnet and stores the mapping in `wallets.json`.
+- When a Circle wallet exists, the backend automatically **funds the Circle Gateway** for that user when their Gateway balance is below `0.1` USDC:
+  - `POST /wallet/fund-gateway` checks the current Gateway balance using the Circle Gateway API.
+  - If the balance is `< 0.1` USDC, it uses the Circle Developer-Controlled Wallets SDK to transfer USDC from the user’s Circle wallet to the Circle Gateway contract on Arc Testnet.
+  - The frontend calls this endpoint automatically after wallet creation; users no longer need to sign a `depositFor` transaction manually.
+- `MIN_GATEWAY_BALANCE` is currently set to `0.1` USDC in `server.ts` and can be adjusted if pricing changes.
+
+### 13. Backend-signed agent payments (Phase 4)
+
+- After Phase 3, all three x402 agent payments (Research, Analyst, Writer) are now **signed server-side** using the user’s Circle dev-controlled wallet.
+- The `/run` endpoint accepts `{ task, userAddress }` and:
+  - looks up the user’s Circle wallet from `wallets.json`,
+  - uses a server-side x402 client to pay each agent via HTTP 402 (GatewayWalletBatched),
+  - emits SSE events for `step_start`, `step_complete`, `receipt` and `report`.
+- The frontend dashboard no longer signs payments in the browser; it simply:
+  - posts `{ task, userAddress }` to `/run`,
+  - streams SSE events to update the pipeline UI, receipt card, and report output.
+- Ensure each user’s Circle dev-controlled wallet has sufficient USDC to cover the per-step prices, and treat `wallets.json` plus Circle wallet balances as critical data in production.
+
+### 14. Notes & gotchas
 
 - **Order matters:** start all three agents, ensure `.env` is loaded, then run scripts.
 - **Gasless:** x402 batching handles payment signing off-chain; only deposits/withdrawals hit chain.

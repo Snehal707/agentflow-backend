@@ -13,16 +13,14 @@ export function useGatewayBalance(address?: string | null) {
       if (!address) {
         return { balance: 0, formatted: "0" };
       }
-      const params = address ? new URLSearchParams({ address }) : "";
-      const url = `${BACKEND_URL}/gateway-balance${params ? `?${params}` : ""}`;
-      const res = await fetch(url);
+      // /circle-wallet/:userAddress maps EOA → Circle wallet → Gateway balance
+      const res = await fetch(`${BACKEND_URL}/circle-wallet/${address}`);
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+        return { balance: 0, formatted: "0" };
       }
       const json = await res.json();
-      const balance = parseFloat(json.balance || json.formatted || "0");
-      return { balance, formatted: json.formatted || json.balance };
+      const balance = parseFloat(json.gatewayBalance ?? "0");
+      return { balance, formatted: balance.toFixed(3) };
     },
     enabled: Boolean(address),
     staleTime: 5000,

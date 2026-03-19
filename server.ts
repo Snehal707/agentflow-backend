@@ -9,6 +9,19 @@ import {
 } from '@circlefin/x402-batching/server';
 import { callHermes } from './lib/hermes';
 import { fetchLiveData } from './lib/live-data';
+import {
+  createUserWallet,
+  getCircleWalletForUser,
+  getOrCreateWalletSetId,
+} from './lib/circleWallet';
+import {
+  ANALYST_SYSTEM_PROMPT,
+  RESEARCH_SYSTEM_PROMPT,
+  WRITER_SYSTEM_PROMPT,
+} from './lib/agentPrompts';
+import { getWalletForUser, setWalletForUser } from './lib/walletStore';
+import { payProtectedResourceServer } from './lib/x402ServerClient';
+import { sendGAEvent } from './lib/gaServer';
 
 dotenv.config();
 
@@ -35,6 +48,7 @@ const CHAIN_ID = 5042002;
 const ARC_TESTNET_DOMAIN = Number(process.env.GATEWAY_DOMAIN || 26);
 const GATEWAY_API_BASE_URL =
   process.env.GATEWAY_API_BASE_URL || 'https://gateway-api-testnet.circle.com/v1';
+const MIN_GATEWAY_BALANCE = 1;
 
 const FACILITATOR_PORT = Number(process.env.FACILITATOR_PORT || 3000);
 const RESEARCH_PORT = Number(process.env.RESEARCH_AGENT_PORT || 3001);
@@ -48,6 +62,16 @@ const ANALYST_URL = `http://127.0.0.1:${ANALYST_PORT}/run`;
 const WRITER_URL = `http://127.0.0.1:${WRITER_PORT}/run`;
 
 const AGENT_TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS || 80_000);
+const RESEARCH_AGENT_TIMEOUT_MS = Number(
+  process.env.RESEARCH_AGENT_TIMEOUT_MS || 140_000,
+);
+const ANALYST_AGENT_TIMEOUT_MS = Number(
+  process.env.ANALYST_AGENT_TIMEOUT_MS || AGENT_TIMEOUT_MS,
+);
+const WRITER_AGENT_TIMEOUT_MS = Number(
+  process.env.WRITER_AGENT_TIMEOUT_MS || AGENT_TIMEOUT_MS,
+);
+const LIVE_DATA_TIMEOUT_MS = Number(process.env.RESEARCH_LIVE_DATA_TIMEOUT_MS || 5_000);
 
 const SYSTEM_PROMPTS = {
   research: `You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON. When the user message includes LIVE DATA, use it for current figures. Do not use training data for prices or recent events when live data is provided. CRITICAL: Never start any line with >. Never use blockquote formatting. Write in clean plain paragraphs.`,
@@ -116,6 +140,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
         reject(err);
       });
   });
+}
+
+function getAgentResultText(data: { result?: string } | undefined | null): string {
+  if (typeof data?.result === 'string' && data.result.trim()) {
+    return data.result;
+  }
+  return JSON.stringify(data ?? {});
 }
 
 function createRunId(prefix: string): string {
@@ -367,6 +398,7 @@ function createFacilitatorApp(): express.Express {
 function createAgentApp(
   name: OrchestratorStep,
   price: string,
+  timeoutMs: number,
   run: (req: Request) => Promise<Record<string, unknown>>,
 ): express.Express {
   const app = express();
@@ -380,7 +412,7 @@ function createAgentApp(
     const requestId = createRunId(name);
     const start = Date.now();
     try {
-      const payload = await withTimeout(run(req), AGENT_TIMEOUT_MS, `${name} agent`);
+      const payload = await withTimeout(run(req), timeoutMs, `${name} agent`);
       console.log(`[Agent ${name} ${requestId}] done in ${Date.now() - start}ms`);
       res.json(payload);
     } catch (err) {
@@ -454,6 +486,186 @@ function createPublicApp(): express.Express {
   app.get('/balance', getBalanceHandler);
   app.get('/gateway-balance', getBalanceHandler);
 
+  app.post('/wallet/create', async (req: Request, res: Response) => {
+    try {
+      const userAddress = (req.body?.userAddress as string | undefined) ?? '';
+      if (!userAddress || !isAddress(userAddress)) {
+        return res.status(400).json({ error: 'Valid userAddress is required.' });
+      }
+      const normalized = getAddress(userAddress);
+
+      const existing = getWalletForUser(normalized);
+      if (existing) {
+        return res.json({
+          userAddress: normalized,
+          circleWalletId: existing.circleWalletId,
+          circleWalletAddress: existing.circleWalletAddress,
+        });
+      }
+
+      await getOrCreateWalletSetId();
+      const created = await createUserWallet(normalized);
+
+      setWalletForUser(normalized, {
+        circleWalletId: created.id,
+        circleWalletAddress: created.address,
+      });
+
+      return res.json({
+        userAddress: normalized,
+        circleWalletId: created.id,
+        circleWalletAddress: created.address,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: getErrorMessage(err) });
+    }
+  });
+
+  app.get('/wallet/:address', (req: Request, res: Response) => {
+    try {
+      const addressParam = req.params.address;
+      if (!addressParam || !isAddress(addressParam)) {
+        return res.status(400).json({ error: 'Valid address parameter is required.' });
+      }
+
+      const normalized = getAddress(addressParam);
+      const existing = getWalletForUser(normalized);
+      if (!existing) {
+        return res.status(404).json({ error: 'Wallet not found' });
+      }
+
+      return res.json({
+        userAddress: normalized,
+        circleWalletId: existing.circleWalletId,
+        circleWalletAddress: existing.circleWalletAddress,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: getErrorMessage(err) });
+    }
+  });
+
+  app.post('/wallet/fund-gateway', async (req: Request, res: Response) => {
+    try {
+      const userAddress = (req.body?.userAddress as string | undefined) ?? '';
+      if (!userAddress || !isAddress(userAddress)) {
+        return res.status(400).json({ error: 'Valid userAddress is required.' });
+      }
+      const normalized = getAddress(userAddress);
+
+      let existing: { walletId: string; address: string };
+      try {
+        existing = getCircleWalletForUser(normalized);
+      } catch {
+        return res
+          .status(404)
+          .json({ error: 'Circle wallet not found for user', userAddress: normalized });
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `[WalletFund] User ${normalized} Circle wallet: ${existing.address} (id=${existing.walletId})`,
+      );
+
+      const gatewayBalance = await fetchGatewayBalanceForAddress(existing.address);
+      const current = Number(gatewayBalance.available || '0');
+
+      // eslint-disable-next-line no-console
+      console.log('[WalletFund] Circle wallet Gateway balance:', current);
+
+      if (Number.isNaN(current)) {
+        return res
+          .status(500)
+          .json({ error: 'Invalid Gateway balance response', balance: gatewayBalance });
+      }
+
+      const { transferToGateway } = await import('./lib/circleWallet');
+
+      // eslint-disable-next-line no-console
+      console.log('[WalletFund] Calling transferToGateway for wallet:', existing.address);
+
+      const transferResult = await transferToGateway({
+        walletId: existing.walletId,
+        walletAddress: existing.address,
+      });
+
+      const refreshed = await fetchGatewayBalanceForAddress(existing.address);
+      const newBalance = Number(refreshed.available || '0');
+      const funded = transferResult.status === 'COMPLETE';
+
+      if (!funded) {
+        return res.json({
+          funded: false,
+          amount: transferResult.amount ?? 0,
+          transferId: transferResult.transferId,
+          transferStatus: transferResult.status,
+          approvalId: transferResult.approvalId,
+          approvalState: transferResult.approvalState,
+          approvalTxHash: transferResult.approvalTxHash,
+          depositId: transferResult.depositId,
+          depositState: transferResult.depositState,
+          depositTxHash: transferResult.depositTxHash,
+          errorReason: transferResult.errorReason,
+          errorDetails: transferResult.errorDetails,
+          newBalance,
+          message:
+            transferResult.errorDetails ??
+            transferResult.errorReason ??
+            'Gateway deposit did not complete.',
+        });
+      }
+
+      return res.json({
+        funded,
+        amount: transferResult.amount ?? 0,
+        transferId: transferResult.transferId,
+        transferStatus: transferResult.status,
+        approvalId: transferResult.approvalId,
+        approvalState: transferResult.approvalState,
+        approvalTxHash: transferResult.approvalTxHash,
+        depositId: transferResult.depositId,
+        depositState: transferResult.depositState,
+        depositTxHash: transferResult.depositTxHash,
+        errorReason: transferResult.errorReason,
+        errorDetails: transferResult.errorDetails,
+        newBalance,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: getErrorMessage(err) });
+    }
+  });
+
+  app.get('/circle-wallet/:userAddress', async (req: Request, res: Response) => {
+    try {
+      const userAddress = req.params.userAddress ?? '';
+      if (!userAddress || !isAddress(userAddress)) {
+        return res.status(400).json({ error: 'Valid userAddress is required.' });
+      }
+      const normalized = getAddress(userAddress);
+
+      const existing = getWalletForUser(normalized);
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ error: 'Circle wallet not found for user', userAddress: normalized });
+      }
+
+      const gatewayBalance = await fetchGatewayBalanceForAddress(
+        existing.circleWalletAddress,
+      );
+      const balance = Number(gatewayBalance.available || '0');
+
+      return res.json({
+        userAddress: normalized,
+        circleWalletId: existing.circleWalletId,
+        circleWalletAddress: existing.circleWalletAddress,
+        gatewayBalance: balance,
+        rawGatewayBalance: gatewayBalance,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: getErrorMessage(err) });
+    }
+  });
+
   app.post('/deposit', (_req, res) => {
     res.status(410).json({
       success: false,
@@ -504,14 +716,9 @@ function createPublicApp(): express.Express {
   app.get('/agent/:step/run', proxyHandler);
   app.post('/agent/:step/run', proxyHandler);
 
-  // Simple SSE proxy for a single agent call. Frontend controls orchestration/payment.
   app.post('/run', async (req, res) => {
-    const step = parseStep((req.body?.step as string | undefined) ?? 'research');
-    const payload = req.body?.payload;
-    const paymentSignature =
-      (req.body?.paymentSignature as string | undefined) ??
-      req.header('Payment-Signature') ??
-      undefined;
+    const task = (req.body?.task as string | undefined) ?? '';
+    const userAddressInput = (req.body?.userAddress as string | undefined) ?? '';
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -519,63 +726,193 @@ function createPublicApp(): express.Express {
     // @ts-ignore
     res.flushHeaders?.();
 
-    const sendEvent = (event: ProxyEvent) => {
+    const sendEvent = (event: Record<string, unknown>) => {
       if (res.writableEnded) return;
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
 
-    if (!step) {
+    if (!task.trim()) {
       sendEvent({
         type: 'error',
-        message: 'Invalid step. Use research, analyst, or writer.',
+        message: 'Task is required',
+      });
+      res.end();
+      return;
+    }
+
+    if (!userAddressInput || !isAddress(userAddressInput)) {
+      sendEvent({
+        type: 'error',
+        message: 'Valid userAddress is required for payment orchestration.',
+      });
+      res.end();
+      return;
+    }
+
+    let circleWalletId: string;
+    let payerAddress: Address;
+    try {
+      const normalized = getAddress(userAddressInput);
+      const circleWallet = getCircleWalletForUser(normalized);
+      circleWalletId = circleWallet.walletId;
+      // Use Circle wallet address as payer, not the user's EOA
+      payerAddress = circleWallet.address as Address;
+    } catch (err) {
+      sendEvent({
+        type: 'error',
+        message: getErrorMessage(err),
       });
       res.end();
       return;
     }
 
     try {
-      sendEvent({ type: 'proxy_start', step });
-
-      const result = await proxyAgentRun({
-        step,
-        method: 'POST',
-        body: payload,
-        paymentSignature,
+      await sendGAEvent('pipeline_started', {
+        wallet_address: payerAddress,
+        timestamp: Date.now(),
       });
 
-      if (result.paymentRequiredHeader) {
-        sendEvent({
-          type: 'payment_required',
-          step,
-          paymentRequiredHeader: result.paymentRequiredHeader,
-        });
-      }
+      // Research step
+      sendEvent({
+        type: 'step_start',
+        step: 'research',
+        price: researchPrice,
+      });
 
-      if (result.status >= 400 && result.status !== 402) {
-        sendEvent({
-          type: 'error',
-          step,
-          status: result.status,
-          message:
-            typeof result.data === 'string'
-              ? result.data
-              : getErrorMessage(result.data),
-        });
-      } else {
-        sendEvent({
-          type: 'proxy_response',
-          step,
-          status: result.status,
-          transaction: decodeTransactionFromPaymentResponse(
-            result.paymentResponseHeader,
-          ),
-          data: result.data,
-        });
-      }
+      const researchResult = await payProtectedResourceServer<
+        { task?: string; result?: string },
+        { task: string }
+      >({
+        url: RESEARCH_URL,
+        method: 'POST',
+        body: { task },
+        circleWalletId,
+        payer: payerAddress,
+        chainId: CHAIN_ID,
+      });
+
+      const researchTx = researchResult.transaction;
+      const researchText = getAgentResultText(researchResult.data);
+
+      sendEvent({
+        type: 'step_complete',
+        step: 'research',
+        tx: researchTx,
+        amount: researchPrice,
+      });
+
+      await sendGAEvent('research_complete', {
+        wallet_address: payerAddress,
+        tx: researchTx,
+        timestamp: Date.now(),
+      });
+
+      // Analyst step
+      sendEvent({
+        type: 'step_start',
+        step: 'analyst',
+        price: analystPrice,
+      });
+
+      const analystResult = await payProtectedResourceServer<
+        { research?: string; result?: string },
+        { research: string }
+      >({
+        url: ANALYST_URL,
+        method: 'POST',
+        body: { research: researchText },
+        circleWalletId,
+        payer: payerAddress,
+        chainId: CHAIN_ID,
+      });
+
+      const analystTx = analystResult.transaction;
+      const analysisText = getAgentResultText(analystResult.data);
+
+      sendEvent({
+        type: 'step_complete',
+        step: 'analyst',
+        tx: analystTx,
+        amount: analystPrice,
+      });
+
+      await sendGAEvent('analyst_complete', {
+        wallet_address: payerAddress,
+        tx: analystTx,
+        timestamp: Date.now(),
+      });
+
+      // Writer step
+      sendEvent({
+        type: 'step_start',
+        step: 'writer',
+        price: writerPrice,
+      });
+
+      const writerResult = await payProtectedResourceServer<
+        { research?: string; analysis?: string; result?: string },
+        { research: string; analysis: string; task: string }
+      >({
+        url: WRITER_URL,
+        method: 'POST',
+        body: {
+          research: researchText,
+          analysis: analysisText,
+          task,
+        },
+        circleWalletId,
+        payer: payerAddress,
+        chainId: CHAIN_ID,
+      });
+
+      const writerTx = writerResult.transaction;
+
+      sendEvent({
+        type: 'step_complete',
+        step: 'writer',
+        tx: writerTx,
+        amount: writerPrice,
+      });
+
+      await sendGAEvent('writer_complete', {
+        wallet_address: payerAddress,
+        tx: writerTx,
+        timestamp: Date.now(),
+      });
+
+      const total =
+        Number(researchPrice.replace('$', '')) +
+        Number(analystPrice.replace('$', '')) +
+        Number(writerPrice.replace('$', ''));
+
+      sendEvent({
+        type: 'receipt',
+        total: total.toFixed(3),
+        researchPrice,
+        analystPrice,
+        writerPrice,
+        researchTx,
+        analystTx,
+        writerTx,
+      });
+
+      const markdown =
+        writerResult.data.result ||
+        'Writer agent returned no markdown output.';
+
+      sendEvent({
+        type: 'report',
+        markdown,
+      });
+
+      await sendGAEvent('pipeline_complete', {
+        wallet_address: payerAddress,
+        total: total.toFixed(3),
+        timestamp: Date.now(),
+      });
     } catch (err) {
       sendEvent({
         type: 'error',
-        step,
         message: getErrorMessage(err),
       });
     } finally {
@@ -588,39 +925,66 @@ function createPublicApp(): express.Express {
 
 async function start(): Promise<void> {
   const facilitatorApp = createFacilitatorApp();
-  const researchApp = createAgentApp('research', researchPrice, async (req) => {
+  const researchApp = createAgentApp(
+    'research',
+    researchPrice,
+    RESEARCH_AGENT_TIMEOUT_MS,
+    async (req) => {
     const task = (req.body?.task as string) ?? (req.query.task as string) ?? '';
-    const liveData = await fetchLiveData(task);
+    let liveData = '';
+    try {
+      liveData = await withTimeout(
+        fetchLiveData(task),
+        LIVE_DATA_TIMEOUT_MS,
+        `Live data timed out after ${LIVE_DATA_TIMEOUT_MS / 1000}s`,
+      );
+    } catch (liveDataError) {
+      console.warn('[Research] Live data enrichment skipped:', getErrorMessage(liveDataError));
+    }
     const userMessage = liveData
-      ? `LIVE DATA (${new Date().toISOString()}):\n${liveData}\n\nUSER TASK: ${task}\n\nUse the LIVE DATA above for current figures. Do not use training data for prices or recent events.`
+      ? `LIVE DATA JSON (${new Date().toISOString()}):\n${liveData}\n\nUSER TASK:\n${task}\n\nUse the LIVE DATA JSON above for current figures and dated evidence. Prefer CoinGecko for token market data, DefiLlama for chain TVL and stablecoin liquidity, current-event article snapshots for geopolitical developments, Wikipedia for factual background, and DuckDuckGo only for supporting context.`
       : task;
     return {
       task,
-      result: await callHermes(SYSTEM_PROMPTS.research, userMessage),
+      result: await callHermes(RESEARCH_SYSTEM_PROMPT, userMessage),
     };
-  });
-  const analystApp = createAgentApp('analyst', analystPrice, async (req) => {
+  },
+  );
+  const analystApp = createAgentApp(
+    'analyst',
+    analystPrice,
+    ANALYST_AGENT_TIMEOUT_MS,
+    async (req) => {
     const research =
       (req.body?.research as string) ?? (req.query.research as string) ?? '';
     return {
       research,
-      result: await callHermes(SYSTEM_PROMPTS.analyst, research),
+      result: await callHermes(ANALYST_SYSTEM_PROMPT, research),
     };
-  });
-  const writerApp = createAgentApp('writer', writerPrice, async (req) => {
+  },
+  );
+  const writerApp = createAgentApp(
+    'writer',
+    writerPrice,
+    WRITER_AGENT_TIMEOUT_MS,
+    async (req) => {
     const research =
       (req.body?.research as string) ?? (req.query.research as string) ?? '';
     const analysis =
       (req.body?.analysis as string) ?? (req.query.analysis as string) ?? '';
+    const task = (req.body?.task as string) ?? (req.query.task as string) ?? '';
     return {
       research,
       analysis,
       result: await callHermes(
-        SYSTEM_PROMPTS.writer,
-        `RESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`,
+        WRITER_SYSTEM_PROMPT,
+        task
+          ? `TOPIC:\n${task}\n\nRESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`
+          : `RESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`,
       ),
     };
-  });
+  },
+  );
   const publicApp = createPublicApp();
 
   facilitatorApp.listen(FACILITATOR_PORT, () => {

@@ -1,0 +1,39 @@
+<svg width="860" height="180" viewBox="0 0 860 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="860" height="180" rx="28" fill="#0A0A0A"/>
+  <rect x="24" y="24" width="132" height="132" rx="26" fill="#121212"/>
+  <rect x="24.5" y="24.5" width="131" height="131" rx="25.5" stroke="rgba(255,255,255,0.10)"/>
+  <rect x="54" y="110" width="72" height="2" rx="1" fill="url(#goldLine)"/>
+
+  <text
+    x="90"
+    y="96"
+    text-anchor="middle"
+    font-family="'Space Grotesk', 'Arial', sans-serif"
+    font-size="48"
+    font-weight="700"
+    letter-spacing="-4"
+    fill="#E0E0E0"
+  >
+    A<tspan fill="#C0A060">F</tspan>
+  </text>
+
+  <text
+    x="190"
+    y="102"
+    font-family="'Space Grotesk', 'Arial', sans-serif"
+    font-size="62"
+    font-weight="700"
+    letter-spacing="-3"
+    fill="#E0E0E0"
+  >
+    AGENT<tspan fill="#C0A060">FLOW</tspan>
+  </text>
+
+  <defs>
+    <linearGradient id="goldLine" x1="54" y1="111" x2="126" y2="111" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D4B880"/>
+      <stop offset="0.68" stop-color="#C0A060"/>
+      <stop offset="1" stop-color="#C0A060" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+</svg>

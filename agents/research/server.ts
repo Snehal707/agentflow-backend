@@ -3,13 +3,15 @@ import dotenv from 'dotenv';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createGatewayMiddleware } from '@circlefin/x402-batching/server';
 import { callHermes } from '../../lib/hermes';
+import { RESEARCH_SYSTEM_PROMPT } from '../../lib/agentPrompts';
 import { fetchLiveData } from '../../lib/live-data';
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
-const HERMES_TIMEOUT_MS = Number(process.env.RESEARCH_HERMES_TIMEOUT_MS || 80_000);
+const HERMES_TIMEOUT_MS = Number(process.env.RESEARCH_HERMES_TIMEOUT_MS || 140_000);
+const LIVE_DATA_TIMEOUT_MS = Number(process.env.RESEARCH_LIVE_DATA_TIMEOUT_MS || 5_000);
 
 const port = Number(process.env.RESEARCH_AGENT_PORT || 3001);
 let privateKey = process.env.PRIVATE_KEY?.trim() ?? '';
@@ -28,8 +30,6 @@ const gateway = createGatewayMiddleware({
   sellerAddress,
   facilitatorUrl,
 });
-
-const SYSTEM_PROMPT = `You are a research agent. Given a topic, find and summarize key facts, recent developments, and relevant data. Be thorough and factual. Return structured JSON. When the user message includes LIVE DATA, use it for current figures. Do not use training data for prices or recent events when live data is provided. CRITICAL: Never start any line with >. Never use blockquote formatting. Write in clean plain paragraphs.`;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -72,12 +72,21 @@ const runHandler = async (req: express.Request, res: express.Response) => {
     console.log(
       `[Research ${requestId}] ${req.method} /run taskLength=${task.length}`,
     );
-    const liveData = await fetchLiveData(task);
+    let liveData = '';
+    try {
+      liveData = await withTimeout(
+        fetchLiveData(task),
+        LIVE_DATA_TIMEOUT_MS,
+        `Live data timed out after ${LIVE_DATA_TIMEOUT_MS / 1000}s`,
+      );
+    } catch (liveDataError) {
+      console.warn(`[Research ${requestId}] Live data enrichment skipped:`, getErrorMessage(liveDataError));
+    }
     const userMessage = liveData
-      ? `LIVE DATA (${new Date().toISOString()}):\n${liveData}\n\nUSER TASK: ${task}\n\nUse the LIVE DATA above for current figures. Do not use training data for prices or recent events.`
+      ? `LIVE DATA JSON (${new Date().toISOString()}):\n${liveData}\n\nUSER TASK:\n${task}\n\nUse the LIVE DATA JSON above for current figures and dated evidence. Prefer CoinGecko for token market data, DefiLlama for chain TVL and stablecoin liquidity, current-event article snapshots for geopolitical developments, Wikipedia for factual background, and DuckDuckGo only for supporting context.`
       : task;
     const result = await withTimeout(
-      callHermes(SYSTEM_PROMPT, userMessage),
+      callHermes(RESEARCH_SYSTEM_PROMPT, userMessage),
       HERMES_TIMEOUT_MS,
       `Hermes timed out after ${HERMES_TIMEOUT_MS / 1000}s`,
     );

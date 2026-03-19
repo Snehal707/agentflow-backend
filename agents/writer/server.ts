@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createGatewayMiddleware } from '@circlefin/x402-batching/server';
 import { callHermes } from '../../lib/hermes';
+import { WRITER_SYSTEM_PROMPT } from '../../lib/agentPrompts';
 
 dotenv.config();
 
@@ -27,38 +28,29 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const SYSTEM_PROMPT = `You are a writer agent. Given research and analysis, write a clear, well-structured report. Use markdown formatting. Make it professional and readable. CRITICAL FORMATTING RULES: Never use > at the start of any line. Never use blockquote markdown. Write every sentence as plain paragraph text or bullet points with - only. If you use > anywhere it will break the output. Structure the report exactly as follows:
-# [Topic] — Research Report
-**Prepared by:** AgentFlow AI
----
-## Executive Summary (2-3 sentence overview)
-## Key Facts (clean bullet points)
-## Recent Developments (paragraphs, no >)
-## Data & Statistics (markdown table where appropriate)
-## Analysis (analytical conclusions from analyst agent)
-## Conclusion (final summary)
----
-Do NOT add any disclaimer or warning at the end of the report. The disclaimer is handled by the application automatically.
-Do NOT use > symbol anywhere in the output. Not for lists, not for quotes, not for any reason.`;
-
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {
     const research =
       (req.body?.research as string) ?? (req.query.research as string) ?? '';
     const analysis =
       (req.body?.analysis as string) ?? (req.query.analysis as string) ?? '';
-    const combinedInput = `RESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`;
-    const result = await callHermes(SYSTEM_PROMPT, combinedInput);
+    const task = (req.body?.task as string) ?? (req.query.task as string) ?? '';
+
+    const combinedInput = task
+      ? `TOPIC:\n${task}\n\nRESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`
+      : `RESEARCH:\n${research}\n\nANALYSIS:\n${analysis}`;
+
+    const result = await callHermes(WRITER_SYSTEM_PROMPT, combinedInput);
     res.json({ research, analysis, result });
   } catch (err) {
     console.error('Writer agent error:', err);
     res.status(500).json({ error: 'Writer agent failed' });
   }
 };
+
 app.get('/run', gateway.require(price), runHandler);
 app.post('/run', gateway.require(price), runHandler);
 
 app.listen(port, () => {
   console.log(`Writer agent running on :${port}`);
 });
-

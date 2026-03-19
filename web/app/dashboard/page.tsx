@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { useAccount, useChainId, useWalletClient } from "wagmi";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useAccount, useChainId } from "wagmi";
 import { Onboarding } from "@/components/Onboarding";
 import { AgentPipeline, type AgentStep } from "@/components/AgentPipeline";
 import { Receipt } from "@/components/Receipt";
@@ -9,22 +9,23 @@ import { Report } from "@/components/Report";
 import { useGatewayBalance } from "@/lib/hooks/useGatewayBalance";
 import { useStackHealth } from "@/lib/hooks/useStackHealth";
 import { ARC_CHAIN_ID } from "@/lib/arcChain";
-import { payProtectedResource } from "@/lib/x402BrowserClient";
+import { trackEvent } from "@/lib/ga";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
-
-const AGENT_ENDPOINTS = {
-  research: `${BACKEND_URL}/agent/research/run`,
-  analyst: `${BACKEND_URL}/agent/analyst/run`,
-  writer: `${BACKEND_URL}/agent/writer/run`,
-} as const;
 
 const PRICES = {
   research: "0.005",
   analyst: "0.003",
   writer: "0.008",
 } as const;
+
+const MIN_GATEWAY_BALANCE = 0.016;
+const TOTAL_PIPELINE_COST = (
+  Number(PRICES.research) +
+  Number(PRICES.analyst) +
+  Number(PRICES.writer)
+).toFixed(3);
 
 const INITIAL_STEPS: AgentStep[] = [
   { key: "research", label: "Research Agent", price: PRICES.research, status: "idle" },
@@ -33,18 +34,99 @@ const INITIAL_STEPS: AgentStep[] = [
 ];
 
 type StepKey = AgentStep["key"];
+type StepFailure = Error & { step?: StepKey };
+type PanelTone = "gold" | "cyan" | "indigo" | "emerald";
 
-type ResearchPayload = { task?: string; result?: string };
-type AnalystPayload = { research?: string; result?: string };
-type WriterPayload = { research?: string; analysis?: string; result?: string };
+const SECTION_STYLES: Record<
+  PanelTone,
+  { border: string; title: string; line: string; bg: string }
+> = {
+  gold: {
+    border: "border-gold/20",
+    title: "text-white",
+    line: "from-gold/70 via-gold/14 to-transparent",
+    bg: "bg-[radial-gradient(circle_at_top_left,rgba(192,160,96,0.08),transparent_42%),#0b0b0b]",
+  },
+  cyan: {
+    border: "border-gold/16",
+    title: "text-white",
+    line: "from-gold/60 via-gold/12 to-transparent",
+    bg: "bg-[radial-gradient(circle_at_top_left,rgba(192,160,96,0.05),transparent_38%),#0b0b0b]",
+  },
+  indigo: {
+    border: "border-gold/16",
+    title: "text-white",
+    line: "from-gold/60 via-gold/12 to-transparent",
+    bg: "bg-[radial-gradient(circle_at_top_left,rgba(192,160,96,0.05),transparent_38%),#0b0b0b]",
+  },
+  emerald: {
+    border: "border-gold/16",
+    title: "text-white",
+    line: "from-gold/60 via-gold/12 to-transparent",
+    bg: "bg-[radial-gradient(circle_at_top_left,rgba(192,160,96,0.05),transparent_38%),#0b0b0b]",
+  },
+};
 
-interface StepFailure extends Error {
-  step?: StepKey;
+function WorkspaceSection({
+  title,
+  tone,
+  className,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description?: string;
+  tone: PanelTone;
+  className?: string;
+  children: ReactNode;
+}) {
+  const styles = SECTION_STYLES[tone];
+
+  return (
+    <section
+      className={`relative overflow-hidden rounded-[26px] border p-6 ${styles.border} ${styles.bg} ${className ?? ""}`}
+    >
+      <div className={`absolute inset-x-0 top-0 h-px bg-gradient-to-r ${styles.line}`} />
+      <h2 className={`relative text-base font-medium tracking-[0.01em] ${styles.title}`}>
+        {title}
+      </h2>
+      <div className="relative mt-6">{children}</div>
+    </section>
+  );
+}
+
+function StatText({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: string;
+  tone?: "default" | "good" | "warn";
+}) {
+  const valueClass =
+    tone === "good"
+      ? "text-white"
+      : tone === "warn"
+        ? "text-gold/90"
+        : "text-white";
+
+  return (
+    <div className="min-w-[120px]">
+      <span className="text-[10px] uppercase tracking-[0.12em] text-gold/52">
+        {label}
+      </span>
+      <div className={`mt-1 text-lg font-semibold tracking-tight ${valueClass}`}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
+  const [mounted, setMounted] = useState(false);
   const { address, isConnected } = useAccount();
-  const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
   const { gatewayBalance, isLowBalance, refetch } = useGatewayBalance(address);
   const { stackHealth } = useStackHealth();
@@ -62,28 +144,38 @@ export default function DashboardPage() {
   const [report, setReport] = useState<string | null>(null);
 
   const isOnArc = chainId === ARC_CHAIN_ID;
+  const isWalletReady = mounted && isConnected && isOnArc;
   const canRun =
     isConnected &&
-    Boolean(walletClient) &&
     isOnArc &&
     !isLowBalance &&
-    gatewayBalance >= 0.016 &&
+    gatewayBalance >= MIN_GATEWAY_BALANCE &&
     !isRunning &&
     task.trim().length > 0;
 
   const disabledReason = !task.trim()
-    ? "Enter a research task"
+    ? "Enter a research brief"
     : !isConnected
       ? "Connect wallet"
-      : !walletClient
-        ? "Wallet not ready"
-        : !isOnArc
-          ? "Switch to Arc Testnet"
-          : isLowBalance || gatewayBalance < 0.016
-            ? "Low Gateway balance (need >= 0.016 USDC)"
-            : isRunning
-              ? "Running..."
-              : null;
+      : !isOnArc
+        ? "Switch to Arc Testnet"
+        : isLowBalance || gatewayBalance < MIN_GATEWAY_BALANCE
+          ? `Gateway requires ${MIN_GATEWAY_BALANCE.toFixed(3)} USDC`
+          : isRunning
+            ? "Pipeline active"
+            : null;
+
+  const briefHint = !task.trim()
+    ? "Brief required"
+    : !isConnected
+      ? "Connect wallet"
+      : !isOnArc
+        ? "Switch to Arc"
+        : isLowBalance || gatewayBalance < MIN_GATEWAY_BALANCE
+          ? "Top up Gateway"
+          : isRunning
+            ? "Running..."
+            : "Ready";
 
   const updateStep = useCallback(
     (step: StepKey, status: AgentStep["status"], tx?: string) => {
@@ -101,10 +193,10 @@ export default function DashboardPage() {
   const runAgentFlow = useCallback(async () => {
     const trimmedTask = task.trim();
     if (!trimmedTask) {
-      setError("Please enter a research task.");
+      setError("Please enter a research brief.");
       return;
     }
-    if (!walletClient || !address) {
+    if (!address) {
       setError("Connect MetaMask before running AgentFlow.");
       return;
     }
@@ -119,71 +211,106 @@ export default function DashboardPage() {
     setSteps(INITIAL_STEPS);
     setIsRunning(true);
 
-    const runPaidStep = async <TResponse, TBody extends Record<string, unknown>>(
-      step: StepKey,
-      endpoint: string,
-      body: TBody,
-    ): Promise<{ data: TResponse; tx?: string }> => {
-      try {
-        updateStep(step, "running");
-        const result = await payProtectedResource<TResponse, TBody>({
-          url: endpoint,
-          method: "POST",
-          body,
-          walletClient,
-          payer: address,
-          chainId: ARC_CHAIN_ID,
-          onAwaitSignature: () => updateStep(step, "awaiting_signature"),
-        });
-        updateStep(step, "complete", result.transaction);
-        return { data: result.data, tx: result.transaction };
-      } catch (cause) {
-        updateStep(step, "error");
-        const message =
-          cause instanceof Error ? cause.message : "Unknown payment error";
-        const failure = new Error(`${step} step failed: ${message}`) as StepFailure;
-        failure.step = step;
-        throw failure;
-      }
-    };
+    trackEvent("pipeline_started", {
+      wallet_address: address,
+      task_length: trimmedTask.length,
+      timestamp: Date.now(),
+    });
 
     try {
-      const researchStep = await runPaidStep<ResearchPayload, { task: string }>(
-        "research",
-        AGENT_ENDPOINTS.research,
-        { task: trimmedTask },
-      );
-
-      const analystStep = await runPaidStep<AnalystPayload, { research: string }>(
-        "analyst",
-        AGENT_ENDPOINTS.analyst,
-        { research: JSON.stringify(researchStep.data) },
-      );
-
-      const writerStep = await runPaidStep<
-        WriterPayload,
-        { research: string; analysis: string }
-      >("writer", AGENT_ENDPOINTS.writer, {
-        research: JSON.stringify(researchStep.data),
-        analysis: JSON.stringify(analystStep.data),
+      const response = await fetch(`${BACKEND_URL}/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          task: trimmedTask,
+          userAddress: address,
+        }),
       });
 
-      setReceipt({
-        researchTx: researchStep.tx,
-        analystTx: analystStep.tx,
-        writerTx: writerStep.tx,
-        total: (
-          Number(PRICES.research) +
-          Number(PRICES.analyst) +
-          Number(PRICES.writer)
-        ).toFixed(3),
-      });
+      if (!response.ok || !response.body) {
+        const text = await response.text();
+        throw new Error(
+          text || `Pipeline start failed with status ${response.status}`,
+        );
+      }
 
-      const markdown =
-        writerStep.data.result ||
-        "Writer agent returned no markdown output.";
-      setReport(markdown);
-      refetch();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) return;
+        const json = trimmed.slice(5).trim();
+        if (!json) return;
+
+        try {
+          const event = JSON.parse(json) as
+            | { type: "step_start"; step: StepKey; price: string }
+            | { type: "step_complete"; step: StepKey; tx?: string; amount?: string }
+            | {
+                type: "receipt";
+                researchTx?: string;
+                analystTx?: string;
+                writerTx?: string;
+                total?: string;
+              }
+            | { type: "report"; markdown: string }
+            | { type: "error"; message: string; step?: StepKey };
+
+          switch (event.type) {
+            case "step_start":
+              updateStep(event.step, "running");
+              break;
+            case "step_complete":
+              updateStep(event.step, "complete", event.tx);
+              trackEvent(`${event.step}_complete`, {
+                wallet_address: address,
+                tx: event.tx,
+                timestamp: Date.now(),
+              });
+              break;
+            case "receipt":
+              setReceipt({
+                researchTx: event.researchTx,
+                analystTx: event.analystTx,
+                writerTx: event.writerTx,
+                total: event.total,
+              });
+              break;
+            case "report":
+              setReport(event.markdown);
+              trackEvent("pipeline_complete", {
+                wallet_address: address,
+                timestamp: Date.now(),
+              });
+              break;
+            case "error":
+              setError(event.message);
+              if (event.step) {
+                updateStep(event.step, "error");
+              }
+              break;
+          }
+        } catch (parseError) {
+          console.error("Failed to parse SSE event", parseError);
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          processLine(line);
+        }
+      }
+
+      await refetch();
     } catch (err) {
       const failure = err as StepFailure;
       setError(failure.message || "Unexpected error running AgentFlow.");
@@ -193,7 +320,7 @@ export default function DashboardPage() {
     } finally {
       setIsRunning(false);
     }
-  }, [address, isOnArc, refetch, task, updateStep, walletClient]);
+  }, [address, isOnArc, refetch, task, updateStep]);
 
   const reset = useCallback(() => {
     setError(null);
@@ -202,86 +329,136 @@ export default function DashboardPage() {
     setSteps(INITIAL_STEPS);
   }, []);
 
-  return (
-    <main className="min-h-screen pt-28 pb-12 px-6 lg:px-12">
-      {stackHealth && !stackHealth.ok && (
-        <div className="mb-4 p-4 rounded-xl glass border border-danger/30 text-sm font-mono text-danger shadow-[0_0_15px_rgba(231,111,81,0.2)]">
-          <strong>[SYSTEM_WARN] Backend offline.</strong> Ensure Railway is
-          running the unified backend (server.ts) and exposes /agent/*/run.
-        </div>
-      )}
+  const workspaceState = isRunning
+    ? "Processing"
+    : report
+      ? "Ready"
+      : canRun
+        ? "Ready"
+        : "Standby";
 
-      <div className="max-w-7xl mx-auto flex flex-col gap-8">
-        {/* Top row: Setup/Finance left, Action/Monitoring right */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left: Setup/Finance */}
-          <div className="lg:col-span-4 flex flex-col gap-6">
-            <section className="glass p-6 rounded-2xl">
-              <h2 className="text-sm font-mono font-bold text-gold mb-4 uppercase tracking-wider">
-                Initialization
-              </h2>
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  return (
+    <main className="min-h-screen bg-[#050505] font-sans text-white selection:bg-gold/20 selection:text-gold">
+      <div className="mx-auto max-w-[1680px] px-4 py-16 sm:px-6 lg:px-8 xl:px-10 lg:py-24">
+        {stackHealth && !stackHealth.ok && (
+          <div className="mb-12 border-l border-red-500/50 pl-4 text-xs tracking-wide text-red-400/80">
+            System offline. Ensure unified service is running.
+          </div>
+        )}
+
+        <header className="mb-12 border-b border-gold/14 pb-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <h1 className="text-[34px] font-semibold tracking-tight text-white sm:text-[42px]">
+              Research <span className="text-gold">Pipeline</span>
+            </h1>
+            <div className="flex flex-wrap gap-8 xl:justify-end">
+              <StatText
+                label="Status"
+                value={workspaceState}
+                tone={canRun || isRunning || Boolean(report) ? "good" : "default"}
+              />
+              <StatText
+                label="Run Cost"
+                value={`$${TOTAL_PIPELINE_COST}`}
+                tone="warn"
+              />
+              <StatText
+                label="Auth"
+                value={
+                  isWalletReady ? (
+                    <>
+                      <span>Arc </span>
+                      <span className="text-gold">Active</span>
+                    </>
+                  ) : (
+                    <span>Disconnected</span>
+                  )
+                }
+                tone={isWalletReady ? "good" : "warn"}
+              />
+            </div>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(460px,520px)_minmax(0,1fr)] xl:gap-10">
+          <div className="flex flex-col gap-8">
+            <WorkspaceSection eyebrow="Setup" title="Setup" tone="gold">
               <Onboarding />
-            </section>
-            <section className="glass p-6 rounded-2xl">
-              <h2 className="text-sm font-mono font-bold text-platinum mb-4 uppercase tracking-wider">
-                Ledger
-              </h2>
+            </WorkspaceSection>
+
+            <WorkspaceSection eyebrow="Receipt" title="Charges" tone="gold">
               <Receipt data={receipt} isLowBalance={isLowBalance} />
-            </section>
+            </WorkspaceSection>
           </div>
 
-          {/* Right: Action/Monitoring */}
-          <div className="lg:col-span-8 flex flex-col gap-6">
-            <section className="glass-gold p-6 rounded-2xl relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-1 h-full bg-gold" />
-              <h2 className="text-sm font-mono font-bold text-gold mb-4 uppercase tracking-wider">
-                Terminal Input
-              </h2>
-              <textarea
-                value={task}
-                onChange={(e) => setTask(e.target.value)}
-                placeholder="Enter your research task (e.g., 'Research Ethereum's 2025 roadmap')..."
-                className="w-full bg-bg-tertiary border border-white/10 rounded-xl p-4 mb-4 text-sm font-mono focus:border-gold/50 outline-none transition-colors resize-none h-40 text-platinum placeholder:text-platinum-muted"
-                disabled={isRunning}
-              />
-              <div className="flex flex-col sm:flex-row gap-2">
-                <button
-                  onClick={runAgentFlow}
-                  disabled={!canRun}
-                  title={disabledReason ?? undefined}
-                  className="w-full sm:flex-1 py-3 bg-gold text-bg font-bold rounded-xl hover:bg-gold-light transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-gold/10"
-                >
-                  {isRunning ? "RUNNING PIPELINE..." : "RUN AGENT PIPELINE"}
-                </button>
-                {(report || receipt) && (
-                  <button
-                    onClick={reset}
-                    disabled={isRunning}
-                    className="py-3 px-4 border border-white/20 text-sm font-mono rounded-xl hover:bg-white/5 disabled:opacity-50 transition-colors text-platinum"
-                  >
-                    Reset
-                  </button>
+          <div className="flex flex-col gap-8">
+            <WorkspaceSection eyebrow="Prompt" title="Research brief" tone="indigo">
+              <div className="flex flex-col gap-4">
+                <textarea
+                  value={task}
+                  onChange={(event) => setTask(event.target.value)}
+                  placeholder="Example: Compare Ethereum, Solana, and Base across developer growth, stablecoin activity, and institutional traction."
+                  className="h-32 w-full resize-none rounded-2xl border border-gold/14 bg-[#0d0f13] px-5 py-4 text-base leading-7 text-white outline-none transition-colors placeholder:text-white/32 focus:border-gold/50"
+                  disabled={isRunning}
+                />
+
+                <div className="flex flex-col gap-4 border-t border-gold/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-white/72">
+                    {briefHint}
+                  </div>
+
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                    {(report || receipt) && (
+                      <button
+                        onClick={reset}
+                        disabled={isRunning}
+                        className="text-left text-sm text-white/56 transition-colors hover:text-white disabled:opacity-30"
+                      >
+                        Clear output
+                      </button>
+                    )}
+
+                    <button
+                      onClick={runAgentFlow}
+                      disabled={!canRun}
+                      title={disabledReason ?? undefined}
+                      className={`flex w-full items-center justify-center rounded-xl px-6 py-4 text-[15px] font-bold tracking-tight transition-all sm:w-auto sm:min-w-[220px] ${
+                        canRun
+                          ? "bg-gold text-black shadow-[0_10px_30px_rgba(212,175,85,0.22)] hover:translate-y-[-1px] hover:shadow-[0_14px_34px_rgba(212,175,85,0.28)]"
+                          : "border border-gold/20 bg-transparent text-gold/42"
+                      } disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none`}
+                    >
+                      <span>{isRunning ? "Running pipeline..." : "Run pipeline"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="text-sm text-red-400/85">
+                    {error}
+                  </div>
                 )}
               </div>
-              {error && (
-                <div className="mt-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm font-mono">
-                  &gt; ERROR: {error}
-                </div>
-              )}
-            </section>
-            <section className="glass p-6 rounded-2xl">
-              <h2 className="text-sm font-mono font-bold text-platinum mb-4 uppercase tracking-wider">
-                Pipeline Status
-              </h2>
+            </WorkspaceSection>
+
+            <WorkspaceSection eyebrow="Pipeline" title="Pipeline" tone="cyan">
               <AgentPipeline steps={steps} />
-            </section>
+            </WorkspaceSection>
+
+            <WorkspaceSection
+              eyebrow="Report"
+              title="Report"
+              tone="emerald"
+              className="min-h-[320px]"
+            >
+              <Report markdown={report} />
+            </WorkspaceSection>
           </div>
         </div>
-
-        {/* Bottom row: Output full width */}
-        <section className="glass p-6 rounded-2xl min-h-[500px] w-full">
-          <Report markdown={report} />
-        </section>
       </div>
     </main>
   );

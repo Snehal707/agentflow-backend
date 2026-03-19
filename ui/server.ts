@@ -1,7 +1,15 @@
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { getAddress, isAddress, type Address } from 'viem';
+import {
+  createUserWallet,
+  getCircleWalletForUser,
+  getOrCreateWalletSetId,
+} from '../lib/circleWallet';
+import { sendGAEvent } from '../lib/gaServer';
+import { getWalletForUser, setWalletForUser } from '../lib/walletStore';
+import { payProtectedResourceServer } from '../lib/x402ServerClient';
 
 dotenv.config();
 
@@ -11,6 +19,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = Number(process.env.PORT) || Number(process.env.UI_PORT) || 4000;
+const CHAIN_ID = 5042002;
 const GATEWAY_API_BASE_URL =
   process.env.GATEWAY_API_BASE_URL || 'https://gateway-api-testnet.circle.com/v1';
 const GATEWAY_DOMAIN = Number(process.env.GATEWAY_DOMAIN || 26);
@@ -18,6 +27,9 @@ const GATEWAY_DOMAIN = Number(process.env.GATEWAY_DOMAIN || 26);
 const RESEARCH_URL = process.env.RESEARCH_AGENT_URL || 'http://localhost:3001/run';
 const ANALYST_URL = process.env.ANALYST_AGENT_URL || 'http://localhost:3002/run';
 const WRITER_URL = process.env.WRITER_AGENT_URL || 'http://localhost:3003/run';
+const researchPrice = parsePrice(process.env.RESEARCH_AGENT_PRICE, '0.005');
+const analystPrice = parsePrice(process.env.ANALYST_AGENT_PRICE, '0.003');
+const writerPrice = parsePrice(process.env.WRITER_AGENT_PRICE, '0.008');
 
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -56,6 +68,17 @@ function getErrorMessage(err: unknown): string {
   }
 }
 
+function parsePrice(input: string | undefined, fallback: string): string {
+  return `$${(Number(input || fallback) || Number(fallback)).toFixed(3)}`;
+}
+
+function getAgentResultText(data: { result?: string } | undefined | null): string {
+  if (typeof data?.result === 'string' && data.result.trim()) {
+    return data.result;
+  }
+  return JSON.stringify(data ?? {});
+}
+
 async function fetchGatewayBalanceForAddress(address: Address): Promise<{
   available: string;
   total: string;
@@ -91,6 +114,7 @@ async function fetchGatewayBalanceForAddress(address: Address): Promise<{
 
 async function proxyAgentRun(params: {
   step: AgentStep;
+  method?: 'GET' | 'POST';
   body?: unknown;
   paymentSignature?: string;
 }): Promise<{
@@ -108,9 +132,12 @@ async function proxyAgentRun(params: {
   }
 
   const response = await fetch(getAgentUrl(params.step), {
-    method: 'POST',
+    method: params.method ?? 'POST',
     headers,
-    body: JSON.stringify(params.body ?? {}),
+    body:
+      (params.method ?? 'POST') === 'POST'
+        ? JSON.stringify(params.body ?? {})
+        : undefined,
   });
 
   const contentType = response.headers.get('content-type');
@@ -133,7 +160,7 @@ async function proxyAgentRun(params: {
   };
 }
 
-app.get('/gateway-balance', async (req, res) => {
+const getBalanceHandler = async (req: Request, res: Response) => {
   try {
     const addressQuery = req.query.address as string | undefined;
     if (!addressQuery || !isAddress(addressQuery)) {
@@ -149,6 +176,178 @@ app.get('/gateway-balance', async (req, res) => {
     });
   } catch (err) {
     console.error('gateway-balance error:', err);
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+};
+
+app.get('/balance', getBalanceHandler);
+app.get('/gateway-balance', getBalanceHandler);
+
+app.post('/wallet/create', async (req, res) => {
+  try {
+    const userAddress = (req.body?.userAddress as string | undefined) ?? '';
+    if (!userAddress || !isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Valid userAddress is required.' });
+    }
+
+    const normalized = getAddress(userAddress);
+    const existing = getWalletForUser(normalized);
+    if (existing) {
+      return res.json({
+        userAddress: normalized,
+        circleWalletId: existing.circleWalletId,
+        circleWalletAddress: existing.circleWalletAddress,
+      });
+    }
+
+    await getOrCreateWalletSetId();
+    const created = await createUserWallet(normalized);
+
+    setWalletForUser(normalized, {
+      circleWalletId: created.id,
+      circleWalletAddress: created.address,
+    });
+
+    return res.json({
+      userAddress: normalized,
+      circleWalletId: created.id,
+      circleWalletAddress: created.address,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/wallet/:address', (req, res) => {
+  try {
+    const addressParam = req.params.address;
+    if (!addressParam || !isAddress(addressParam)) {
+      return res.status(400).json({ error: 'Valid address parameter is required.' });
+    }
+
+    const normalized = getAddress(addressParam);
+    const existing = getWalletForUser(normalized);
+    if (!existing) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    return res.json({
+      userAddress: normalized,
+      circleWalletId: existing.circleWalletId,
+      circleWalletAddress: existing.circleWalletAddress,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.post('/wallet/fund-gateway', async (req, res) => {
+  try {
+    const userAddress = (req.body?.userAddress as string | undefined) ?? '';
+    if (!userAddress || !isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Valid userAddress is required.' });
+    }
+
+    const normalized = getAddress(userAddress);
+
+    let existing: { walletId: string; address: string };
+    try {
+      existing = getCircleWalletForUser(normalized);
+    } catch {
+      return res
+        .status(404)
+        .json({ error: 'Circle wallet not found for user', userAddress: normalized });
+    }
+
+    const gatewayBalance = await fetchGatewayBalanceForAddress(existing.address as Address);
+    const current = Number(gatewayBalance.available || '0');
+
+    if (Number.isNaN(current)) {
+      return res
+        .status(500)
+        .json({ error: 'Invalid Gateway balance response', balance: gatewayBalance });
+    }
+
+    const { transferToGateway } = await import('../lib/circleWallet');
+    const transferResult = await transferToGateway({
+      walletId: existing.walletId,
+      walletAddress: existing.address,
+    });
+
+    const refreshed = await fetchGatewayBalanceForAddress(existing.address as Address);
+    const newBalance = Number(refreshed.available || '0');
+    const funded = transferResult.status === 'COMPLETE';
+
+    if (!funded) {
+      return res.json({
+        funded: false,
+        amount: transferResult.amount ?? 0,
+        transferId: transferResult.transferId,
+        transferStatus: transferResult.status,
+        approvalId: transferResult.approvalId,
+        approvalState: transferResult.approvalState,
+        approvalTxHash: transferResult.approvalTxHash,
+        depositId: transferResult.depositId,
+        depositState: transferResult.depositState,
+        depositTxHash: transferResult.depositTxHash,
+        errorReason: transferResult.errorReason,
+        errorDetails: transferResult.errorDetails,
+        newBalance,
+        message:
+          transferResult.errorDetails ??
+          transferResult.errorReason ??
+          'Gateway deposit did not complete.',
+      });
+    }
+
+    return res.json({
+      funded,
+      amount: transferResult.amount ?? 0,
+      transferId: transferResult.transferId,
+      transferStatus: transferResult.status,
+      approvalId: transferResult.approvalId,
+      approvalState: transferResult.approvalState,
+      approvalTxHash: transferResult.approvalTxHash,
+      depositId: transferResult.depositId,
+      depositState: transferResult.depositState,
+      depositTxHash: transferResult.depositTxHash,
+      errorReason: transferResult.errorReason,
+      errorDetails: transferResult.errorDetails,
+      newBalance,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: getErrorMessage(err) });
+  }
+});
+
+app.get('/circle-wallet/:userAddress', async (req, res) => {
+  try {
+    const userAddress = req.params.userAddress ?? '';
+    if (!userAddress || !isAddress(userAddress)) {
+      return res.status(400).json({ error: 'Valid userAddress is required.' });
+    }
+
+    const normalized = getAddress(userAddress);
+    const existing = getWalletForUser(normalized);
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ error: 'Circle wallet not found for user', userAddress: normalized });
+    }
+
+    const gatewayBalance = await fetchGatewayBalanceForAddress(
+      existing.circleWalletAddress as Address,
+    );
+    const balance = Number(gatewayBalance.available || '0');
+
+    return res.json({
+      userAddress: normalized,
+      circleWalletId: existing.circleWalletId,
+      circleWalletAddress: existing.circleWalletAddress,
+      gatewayBalance: balance,
+      rawGatewayBalance: gatewayBalance,
+    });
+  } catch (err) {
     return res.status(500).json({ error: getErrorMessage(err) });
   }
 });
@@ -190,7 +389,7 @@ app.get('/health/stack', async (_req, res) => {
   res.status(ok ? 200 : 503).json({ ok, facilitator, research, analyst, writer });
 });
 
-app.post('/agent/:step/run', async (req, res) => {
+const proxyHandler = async (req: Request, res: Response) => {
   const step = parseStep(req.params.step);
   if (!step) {
     return res.status(400).json({ error: 'Invalid step. Use research, analyst, or writer.' });
@@ -199,7 +398,8 @@ app.post('/agent/:step/run', async (req, res) => {
   try {
     const result = await proxyAgentRun({
       step,
-      body: req.body,
+      method: req.method === 'GET' ? 'GET' : 'POST',
+      body: req.method === 'GET' ? req.query : req.body,
       paymentSignature: req.header('Payment-Signature') || undefined,
     });
 
@@ -221,15 +421,14 @@ app.post('/agent/:step/run', async (req, res) => {
     console.error('agent proxy error:', err);
     return res.status(500).json({ error: getErrorMessage(err) });
   }
-});
+};
 
-// SSE endpoint is now a simple single-step proxy. Browser orchestrates all 3 steps.
+app.get('/agent/:step/run', proxyHandler);
+app.post('/agent/:step/run', proxyHandler);
+
 app.post('/run', async (req, res) => {
-  const step = parseStep((req.body?.step as string | undefined) ?? 'research');
-  if (!step) {
-    res.status(400).json({ error: 'Invalid step. Use research, analyst, or writer.' });
-    return;
-  }
+  const task = (req.body?.task as string | undefined) ?? '';
+  const userAddressInput = (req.body?.userAddress as string | undefined) ?? '';
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -242,33 +441,173 @@ app.post('/run', async (req, res) => {
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
-  try {
-    sendEvent({ type: 'proxy_start', step });
-    const result = await proxyAgentRun({
-      step,
-      body: req.body?.payload,
-      paymentSignature:
-        (req.body?.paymentSignature as string | undefined) ||
-        req.header('Payment-Signature') ||
-        undefined,
-    });
+  if (!task.trim()) {
+    sendEvent({ type: 'error', message: 'Task is required' });
+    res.end();
+    return;
+  }
 
-    if (result.paymentRequiredHeader) {
-      sendEvent({
-        type: 'payment_required',
-        step,
-        paymentRequiredHeader: result.paymentRequiredHeader,
-      });
-    }
+  if (!userAddressInput || !isAddress(userAddressInput)) {
+    sendEvent({
+      type: 'error',
+      message: 'Valid userAddress is required for payment orchestration.',
+    });
+    res.end();
+    return;
+  }
+
+  let circleWalletId: string;
+  let payerAddress: Address;
+  try {
+    const normalized = getAddress(userAddressInput);
+    const circleWallet = getCircleWalletForUser(normalized);
+    circleWalletId = circleWallet.walletId;
+    payerAddress = circleWallet.address as Address;
+  } catch (err) {
+    sendEvent({ type: 'error', message: getErrorMessage(err) });
+    res.end();
+    return;
+  }
+
+  try {
+    await sendGAEvent('pipeline_started', {
+      wallet_address: payerAddress,
+      timestamp: Date.now(),
+    });
 
     sendEvent({
-      type: result.status >= 400 && result.status !== 402 ? 'error' : 'proxy_response',
-      step,
-      status: result.status,
-      data: result.data,
+      type: 'step_start',
+      step: 'research',
+      price: researchPrice,
+    });
+
+    const researchResult = await payProtectedResourceServer<
+      { task?: string; result?: string },
+      { task: string }
+    >({
+      url: RESEARCH_URL,
+      method: 'POST',
+      body: { task },
+      circleWalletId,
+      payer: payerAddress,
+      chainId: CHAIN_ID,
+    });
+
+    const researchTx = researchResult.transaction;
+    const researchText = getAgentResultText(researchResult.data);
+
+    sendEvent({
+      type: 'step_complete',
+      step: 'research',
+      tx: researchTx,
+      amount: researchPrice,
+    });
+
+    await sendGAEvent('research_complete', {
+      wallet_address: payerAddress,
+      tx: researchTx,
+      timestamp: Date.now(),
+    });
+
+    sendEvent({
+      type: 'step_start',
+      step: 'analyst',
+      price: analystPrice,
+    });
+
+    const analystResult = await payProtectedResourceServer<
+      { research?: string; result?: string },
+      { research: string }
+    >({
+      url: ANALYST_URL,
+      method: 'POST',
+      body: { research: researchText },
+      circleWalletId,
+      payer: payerAddress,
+      chainId: CHAIN_ID,
+    });
+
+    const analystTx = analystResult.transaction;
+    const analysisText = getAgentResultText(analystResult.data);
+
+    sendEvent({
+      type: 'step_complete',
+      step: 'analyst',
+      tx: analystTx,
+      amount: analystPrice,
+    });
+
+    await sendGAEvent('analyst_complete', {
+      wallet_address: payerAddress,
+      tx: analystTx,
+      timestamp: Date.now(),
+    });
+
+    sendEvent({
+      type: 'step_start',
+      step: 'writer',
+      price: writerPrice,
+    });
+
+    const writerResult = await payProtectedResourceServer<
+      { research?: string; analysis?: string; result?: string },
+      { research: string; analysis: string; task: string }
+    >({
+      url: WRITER_URL,
+      method: 'POST',
+      body: {
+        research: researchText,
+        analysis: analysisText,
+        task,
+      },
+      circleWalletId,
+      payer: payerAddress,
+      chainId: CHAIN_ID,
+    });
+
+    const writerTx = writerResult.transaction;
+
+    sendEvent({
+      type: 'step_complete',
+      step: 'writer',
+      tx: writerTx,
+      amount: writerPrice,
+    });
+
+    await sendGAEvent('writer_complete', {
+      wallet_address: payerAddress,
+      tx: writerTx,
+      timestamp: Date.now(),
+    });
+
+    const total =
+      Number(researchPrice.replace('$', '')) +
+      Number(analystPrice.replace('$', '')) +
+      Number(writerPrice.replace('$', ''));
+
+    sendEvent({
+      type: 'receipt',
+      total: total.toFixed(3),
+      researchPrice,
+      analystPrice,
+      writerPrice,
+      researchTx,
+      analystTx,
+      writerTx,
+    });
+
+    sendEvent({
+      type: 'report',
+      markdown: writerResult.data.result || 'Writer agent returned no markdown output.',
+    });
+
+    await sendGAEvent('pipeline_complete', {
+      wallet_address: payerAddress,
+      total: total.toFixed(3),
+      timestamp: Date.now(),
     });
   } catch (err) {
-    sendEvent({ type: 'error', step, message: getErrorMessage(err) });
+    sendEvent({ type: 'error', message: getErrorMessage(err) });
   } finally {
     if (!res.writableEnded) res.end();
   }

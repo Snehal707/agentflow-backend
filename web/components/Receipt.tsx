@@ -1,12 +1,51 @@
 "use client";
 
 import { ARC_EXPLORER_URL } from "@/lib/arcChain";
+import {
+  formatTransactionReference,
+  isOnchainTransactionHash,
+} from "@/lib/transactions";
 
 export interface ReceiptData {
   researchTx?: string;
   analystTx?: string;
   writerTx?: string;
   total?: string;
+}
+
+const LINE_ITEMS = [
+  { key: "research", label: "Research agent", amount: "0.005" },
+  { key: "analyst", label: "Analyst agent", amount: "0.003" },
+  { key: "writer", label: "Writer agent", amount: "0.008" },
+] as const;
+
+function ExplorerLink({ hash }: { hash?: string }) {
+  if (!hash) {
+    return <span className="font-mono text-[10px] text-white/45">Pending</span>;
+  }
+
+  if (!isOnchainTransactionHash(hash)) {
+    return (
+      <span
+        className="font-mono text-[10px] text-gold/48"
+        title={`Gateway batch settlement reference: ${hash}`}
+      >
+        Batch {formatTransactionReference(hash)}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={`${ARC_EXPLORER_URL}/tx/${hash}`}
+      target="_blank"
+      rel="noreferrer"
+      className="font-mono text-[10px] text-gold/60 transition-colors hover:text-gold"
+      title={hash}
+    >
+      {formatTransactionReference(hash)}
+    </a>
+  );
 }
 
 export function Receipt({
@@ -16,71 +55,48 @@ export function Receipt({
   data?: ReceiptData | null;
   isLowBalance?: boolean;
 }) {
-  const researchTx = data?.researchTx;
-  const analystTx = data?.analystTx;
-  const writerTx = data?.writerTx;
   const total = data?.total ?? "0.016";
-
-  const TxLink = ({ hash, label }: { hash?: string; label: string }) =>
-    hash ? (
-      <a
-        href={`${ARC_EXPLORER_URL}/tx/${hash}`}
-        target="_blank"
-        rel="noreferrer"
-        className="text-gold hover:underline text-xs truncate max-w-[180px] block"
-      >
-        {hash.slice(0, 10)}...
-      </a>
-    ) : (
-      <span className="text-xs text-platinum-muted">—</span>
-    );
+  const transactionMap = {
+    research: data?.researchTx,
+    analyst: data?.analystTx,
+    writer: data?.writerTx,
+  } as const;
 
   return (
-    <div className="space-y-3 flex-1 text-sm font-mono flex flex-col">
-      <div className="space-y-3 flex-1 text-sm bg-bg-tertiary/80 p-4 rounded-lg border border-white/5">
-        <div className="flex justify-between border-b border-white/5 pb-2 border-dashed">
-          <span className="text-platinum-muted">RESEARCH_NODE</span>
-          <span className="text-platinum">$0.005</span>
-        </div>
-        <div className="flex justify-between border-b border-white/5 pb-2 border-dashed">
-          <span className="text-platinum-muted">ANALYST_NODE</span>
-          <span className="text-platinum">$0.003</span>
-        </div>
-        <div className="flex justify-between border-b border-white/5 pb-2 border-dashed">
-          <span className="text-platinum-muted">WRITER_NODE</span>
-          <span className="text-platinum">$0.008</span>
-        </div>
-        <div className="flex justify-between font-bold text-gold pt-2">
-          <span>TOTAL_DEBIT</span>
-          <span>${total} USDC</span>
-        </div>
-        <div className="flex justify-between text-xs pt-2">
-          <span className="text-platinum-muted">NET_GAS_FEE</span>
-          <span className="text-success">$0.000</span>
-        </div>
-        <div className="pt-6 mt-4 border-t border-white/10">
-          <div className="text-[10px] text-platinum-muted mb-2 uppercase tracking-wider">
-            Transaction Hashes
+    <div className="flex flex-col text-sm text-white/72">
+      <div className="flex flex-col gap-4 border-b border-gold/10 pb-6">
+        {LINE_ITEMS.map((item) => (
+          <div key={item.key} className="flex items-center justify-between">
+            <span className="text-white/78">{item.label}</span>
+            <span className="tabular-nums text-sm font-medium text-white">${item.amount}</span>
           </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex justify-between items-center">
-              <span className="text-platinum-muted">RSRCH:</span>
-              <TxLink hash={researchTx} label="Research" />
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-platinum-muted">ANLYS:</span>
-              <TxLink hash={analystTx} label="Analyst" />
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-platinum-muted">WRTER:</span>
-              <TxLink hash={writerTx} label="Writer" />
-            </div>
-          </div>
+        ))}
+        <div className="flex items-center justify-between pt-2">
+          <span className="text-white/50">Network fee</span>
+          <span className="tabular-nums text-sm text-white/55">$0.000</span>
         </div>
       </div>
+
+      <div className="flex items-center justify-between py-6">
+        <span className="text-lg font-medium text-white">Total charged</span>
+        <span className="tabular-nums text-2xl font-semibold text-gold">${total}</span>
+      </div>
+
+      <div className="flex flex-col gap-4 border-t border-gold/10 pt-6">
+        <div className="mb-1 text-sm font-medium text-gold/78">
+          Transactions
+        </div>
+        {LINE_ITEMS.map((item) => (
+          <div key={item.key} className="flex items-center justify-between">
+            <span className="text-sm text-white/58">{item.label}</span>
+            <ExplorerLink hash={transactionMap[item.key]} />
+          </div>
+        ))}
+      </div>
+
       {isLowBalance && (
-        <div className="mt-4 p-3 rounded bg-danger/10 border border-danger/30 text-xs text-danger text-center animate-pulse">
-          WARNING: GATEWAY BALANCE CRITICAL
+        <div className="mt-8 text-sm italic text-gold/80">
+          Gateway balance is low. Top up before the next run.
         </div>
       )}
     </div>

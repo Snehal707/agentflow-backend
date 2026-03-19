@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createGatewayMiddleware } from '@circlefin/x402-batching/server';
 import { callHermes } from '../../lib/hermes';
+import { ANALYST_SYSTEM_PROMPT } from '../../lib/agentPrompts';
 
 dotenv.config();
 
@@ -27,13 +28,11 @@ const gateway = createGatewayMiddleware({
   facilitatorUrl,
 });
 
-const SYSTEM_PROMPT = `You are an analyst agent. Given raw research data, extract key insights, identify patterns, and provide analytical conclusions. Return structured JSON. Do NOT start any line or sentence with the > symbol. Do NOT use blockquote formatting. Write in clean plain paragraphs.`;
-
 const runHandler = async (req: express.Request, res: express.Response) => {
   try {
     const research =
       (req.body?.research as string) ?? (req.query.research as string) ?? '';
-    const result = await callHermes(SYSTEM_PROMPT, research);
+    const result = await callHermes(ANALYST_SYSTEM_PROMPT, research);
     res.json({ research, result });
   } catch (err) {
     console.error('Analyst agent error:', err);
