@@ -24,7 +24,7 @@ export function loadWallets(): WalletStore {
     if (!fs.existsSync(STORE_PATH)) {
       return {};
     }
-    const raw = fs.readFileSync(STORE_PATH, 'utf8');
+    const raw = fs.readFileSync(STORE_PATH, 'utf8').replace(/^\uFEFF/, '');
     if (!raw.trim()) {
       return {};
     }

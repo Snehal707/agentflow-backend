@@ -1,11 +1,15 @@
 import dotenv from 'dotenv';
-import { createPublicClient, formatUnits, http } from 'viem';
-import { getWalletForUser } from './walletStore';
+import { createPublicClient, formatUnits, getAddress, http } from 'viem';
+import { getWalletForUser, setWalletForUser } from './walletStore';
 
 dotenv.config();
 
 const ARC_CHAIN_ID = 5042002;
+const ARC_TESTNET_BLOCKCHAIN = 'ARC-TESTNET';
 const ARC_RPC_URL = process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.network';
+const GATEWAY_API_BASE_URL =
+  process.env.GATEWAY_API_BASE_URL || 'https://gateway-api-testnet.circle.com/v1';
+const ARC_TESTNET_DOMAIN = Number(process.env.GATEWAY_DOMAIN || 26);
 const GATEWAY_CONTRACT_ADDRESS = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9';
 const USDC_TOKEN_ADDRESS = '0x3600000000000000000000000000000000000000';
 const USDC_DECIMALS = 6;
@@ -73,6 +77,38 @@ async function getOnChainUSDCAllowanceRaw(
 
 function rawUSDCToNumber(amountRaw: bigint): number {
   return Number(formatUnits(amountRaw, USDC_DECIMALS));
+}
+
+async function fetchGatewayBalanceForAddress(address: string): Promise<number> {
+  try {
+    const response = await fetch(`${GATEWAY_API_BASE_URL}/balances`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: 'USDC',
+        sources: [{ depositor: address, domain: ARC_TESTNET_DOMAIN }],
+      }),
+    });
+
+    const json = (await response.json().catch(() => ({}))) as {
+      balances?: Array<{ balance?: string }>;
+      message?: string;
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(json.message || json.error || `HTTP ${response.status}`);
+    }
+
+    return Number(json.balances?.[0]?.balance ?? 0);
+  } catch (err: any) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[CircleWallet] Failed to fetch Gateway balance for candidate wallet ${address}:`,
+      err?.message ?? err,
+    );
+    return 0;
+  }
 }
 
 function feeStringToRawWithCeil(fee: string | undefined): bigint {
@@ -174,7 +210,7 @@ export async function createUserWallet(userLabel: string): Promise<{
 
   const response = await dcwClient.createWallets({
     walletSetId: setId,
-    blockchains: ['ARC-TESTNET'],
+    blockchains: [ARC_TESTNET_BLOCKCHAIN],
     count: 1,
     accountType: 'EOA',
     metadata: [
@@ -206,17 +242,126 @@ export async function createUserWallet(userLabel: string): Promise<{
   };
 }
 
-export function getCircleWalletForUser(userAddress: string): {
+type CircleWalletCandidate = {
   walletId: string;
   address: string;
-} {
+  createDate?: string;
+  gatewayBalance: number;
+};
+
+async function listCircleWalletCandidatesForRefId(refId: string): Promise<CircleWalletCandidate[]> {
+  const setId = await getOrCreateWalletSetId();
+  const dcwClient = await getDCWClient();
+  const response = await dcwClient.listWallets({
+    walletSetId: setId,
+    refId,
+    blockchain: ARC_TESTNET_BLOCKCHAIN,
+    pageSize: 50,
+    order: 'DESC',
+  } as any);
+
+  const wallets = Array.isArray(response?.data?.wallets) ? response.data.wallets : [];
+  const candidates = wallets.filter(
+    (wallet: any) =>
+      wallet?.id &&
+      wallet?.address &&
+      wallet?.blockchain === ARC_TESTNET_BLOCKCHAIN &&
+      (wallet?.state === 'LIVE' || !wallet?.state) &&
+      (wallet?.accountType === 'EOA' || !wallet?.accountType),
+  );
+
+  return Promise.all(
+    candidates.map(async (wallet: any) => ({
+      walletId: wallet.id as string,
+      address: wallet.address as string,
+      createDate: typeof wallet.createDate === 'string' ? wallet.createDate : undefined,
+      gatewayBalance: await fetchGatewayBalanceForAddress(wallet.address as string),
+    })),
+  );
+}
+
+async function findRemoteCircleWalletForUser(userAddress: string): Promise<{
+  walletId: string;
+  address: string;
+} | null> {
+  const normalized = getAddress(userAddress);
+  const refIds = Array.from(new Set([normalized, normalized.toLowerCase()]));
+  const candidatesById = new Map<string, CircleWalletCandidate>();
+
+  for (const refId of refIds) {
+    const candidates = await listCircleWalletCandidatesForRefId(refId);
+    for (const candidate of candidates) {
+      candidatesById.set(candidate.walletId, candidate);
+    }
+  }
+
+  const candidates = Array.from(candidatesById.values());
+  if (!candidates.length) {
+    return null;
+  }
+
+  candidates.sort((a, b) => {
+    if (b.gatewayBalance !== a.gatewayBalance) {
+      return b.gatewayBalance - a.gatewayBalance;
+    }
+    const aDate = a.createDate ? Date.parse(a.createDate) : 0;
+    const bDate = b.createDate ? Date.parse(b.createDate) : 0;
+    return bDate - aDate;
+  });
+
+  const selected = candidates[0];
+
+  if (candidates.length > 1) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[CircleWallet] Found ${candidates.length} wallets for ${normalized}; selecting ${selected.address} with gatewayBalance=${selected.gatewayBalance}.`,
+    );
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[CircleWallet] Recovered existing Circle wallet ${selected.address} for ${normalized} from Circle.`,
+    );
+  }
+
+  setWalletForUser(normalized, {
+    circleWalletId: selected.walletId,
+    circleWalletAddress: selected.address,
+  });
+
+  return {
+    walletId: selected.walletId,
+    address: selected.address,
+  };
+}
+
+export async function findCircleWalletForUser(userAddress: string): Promise<{
+  walletId: string;
+  address: string;
+} | null> {
+  const normalized = getAddress(userAddress);
   const stored = getWalletForUser(userAddress);
-  if (!stored) {
+  if (stored?.circleWalletId && stored?.circleWalletAddress) {
+    return {
+      walletId: stored.circleWalletId,
+      address: stored.circleWalletAddress,
+    };
+  }
+
+  return findRemoteCircleWalletForUser(normalized);
+}
+
+export async function getCircleWalletForUser(userAddress: string): Promise<{
+  walletId: string;
+  address: string;
+}> {
+  const resolved = await findCircleWalletForUser(userAddress);
+  if (!resolved) {
     throw new Error('Circle wallet not found for user');
   }
+
   return {
-    walletId: stored.circleWalletId,
-    address: stored.circleWalletAddress,
+    walletId: resolved.walletId,
+    address: resolved.address,
   };
 }
 

@@ -4,11 +4,12 @@ import path from 'path';
 import { getAddress, isAddress, type Address } from 'viem';
 import {
   createUserWallet,
+  findCircleWalletForUser,
   getCircleWalletForUser,
   getOrCreateWalletSetId,
 } from '../lib/circleWallet';
 import { sendGAEvent } from '../lib/gaServer';
-import { getWalletForUser, setWalletForUser } from '../lib/walletStore';
+import { setWalletForUser } from '../lib/walletStore';
 import { payProtectedResourceServer } from '../lib/x402ServerClient';
 
 dotenv.config();
@@ -192,12 +193,12 @@ app.post('/wallet/create', async (req, res) => {
     }
 
     const normalized = getAddress(userAddress);
-    const existing = getWalletForUser(normalized);
+    const existing = await findCircleWalletForUser(normalized);
     if (existing) {
       return res.json({
         userAddress: normalized,
-        circleWalletId: existing.circleWalletId,
-        circleWalletAddress: existing.circleWalletAddress,
+        circleWalletId: existing.walletId,
+        circleWalletAddress: existing.address,
       });
     }
 
@@ -219,7 +220,7 @@ app.post('/wallet/create', async (req, res) => {
   }
 });
 
-app.get('/wallet/:address', (req, res) => {
+app.get('/wallet/:address', async (req, res) => {
   try {
     const addressParam = req.params.address;
     if (!addressParam || !isAddress(addressParam)) {
@@ -227,15 +228,15 @@ app.get('/wallet/:address', (req, res) => {
     }
 
     const normalized = getAddress(addressParam);
-    const existing = getWalletForUser(normalized);
+    const existing = await findCircleWalletForUser(normalized);
     if (!existing) {
       return res.status(404).json({ error: 'Wallet not found' });
     }
 
     return res.json({
       userAddress: normalized,
-      circleWalletId: existing.circleWalletId,
-      circleWalletAddress: existing.circleWalletAddress,
+      circleWalletId: existing.walletId,
+      circleWalletAddress: existing.address,
     });
   } catch (err) {
     return res.status(500).json({ error: getErrorMessage(err) });
@@ -253,7 +254,7 @@ app.post('/wallet/fund-gateway', async (req, res) => {
 
     let existing: { walletId: string; address: string };
     try {
-      existing = getCircleWalletForUser(normalized);
+      existing = await getCircleWalletForUser(normalized);
     } catch {
       return res
         .status(404)
@@ -329,7 +330,7 @@ app.get('/circle-wallet/:userAddress', async (req, res) => {
     }
 
     const normalized = getAddress(userAddress);
-    const existing = getWalletForUser(normalized);
+    const existing = await findCircleWalletForUser(normalized);
     if (!existing) {
       return res
         .status(404)
@@ -337,14 +338,14 @@ app.get('/circle-wallet/:userAddress', async (req, res) => {
     }
 
     const gatewayBalance = await fetchGatewayBalanceForAddress(
-      existing.circleWalletAddress as Address,
+      existing.address as Address,
     );
     const balance = Number(gatewayBalance.available || '0');
 
     return res.json({
       userAddress: normalized,
-      circleWalletId: existing.circleWalletId,
-      circleWalletAddress: existing.circleWalletAddress,
+      circleWalletId: existing.walletId,
+      circleWalletAddress: existing.address,
       gatewayBalance: balance,
       rawGatewayBalance: gatewayBalance,
     });
@@ -479,7 +480,7 @@ app.post('/run', async (req, res) => {
   let payerAddress: Address;
   try {
     const normalized = getAddress(userAddressInput);
-    const circleWallet = getCircleWalletForUser(normalized);
+    const circleWallet = await getCircleWalletForUser(normalized);
     circleWalletId = circleWallet.walletId;
     payerAddress = circleWallet.address as Address;
   } catch (err) {

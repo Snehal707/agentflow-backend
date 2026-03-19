@@ -11,6 +11,7 @@ import { callHermes } from './lib/hermes';
 import { fetchLiveData } from './lib/live-data';
 import {
   createUserWallet,
+  findCircleWalletForUser,
   getCircleWalletForUser,
   getOrCreateWalletSetId,
 } from './lib/circleWallet';
@@ -19,7 +20,7 @@ import {
   RESEARCH_SYSTEM_PROMPT,
   WRITER_SYSTEM_PROMPT,
 } from './lib/agentPrompts';
-import { getWalletForUser, setWalletForUser } from './lib/walletStore';
+import { setWalletForUser } from './lib/walletStore';
 import { payProtectedResourceServer } from './lib/x402ServerClient';
 import { sendGAEvent } from './lib/gaServer';
 
@@ -495,12 +496,12 @@ function createPublicApp(): express.Express {
       }
       const normalized = getAddress(userAddress);
 
-      const existing = getWalletForUser(normalized);
+      const existing = await findCircleWalletForUser(normalized);
       if (existing) {
         return res.json({
           userAddress: normalized,
-          circleWalletId: existing.circleWalletId,
-          circleWalletAddress: existing.circleWalletAddress,
+          circleWalletId: existing.walletId,
+          circleWalletAddress: existing.address,
         });
       }
 
@@ -522,7 +523,7 @@ function createPublicApp(): express.Express {
     }
   });
 
-  app.get('/wallet/:address', (req: Request, res: Response) => {
+  app.get('/wallet/:address', async (req: Request, res: Response) => {
     try {
       const addressParam = req.params.address;
       if (!addressParam || !isAddress(addressParam)) {
@@ -530,15 +531,15 @@ function createPublicApp(): express.Express {
       }
 
       const normalized = getAddress(addressParam);
-      const existing = getWalletForUser(normalized);
+      const existing = await findCircleWalletForUser(normalized);
       if (!existing) {
         return res.status(404).json({ error: 'Wallet not found' });
       }
 
       return res.json({
         userAddress: normalized,
-        circleWalletId: existing.circleWalletId,
-        circleWalletAddress: existing.circleWalletAddress,
+        circleWalletId: existing.walletId,
+        circleWalletAddress: existing.address,
       });
     } catch (err) {
       return res.status(500).json({ error: getErrorMessage(err) });
@@ -555,7 +556,7 @@ function createPublicApp(): express.Express {
 
       let existing: { walletId: string; address: string };
       try {
-        existing = getCircleWalletForUser(normalized);
+        existing = await getCircleWalletForUser(normalized);
       } catch {
         return res
           .status(404)
@@ -643,22 +644,20 @@ function createPublicApp(): express.Express {
       }
       const normalized = getAddress(userAddress);
 
-      const existing = getWalletForUser(normalized);
+      const existing = await findCircleWalletForUser(normalized);
       if (!existing) {
         return res
           .status(404)
           .json({ error: 'Circle wallet not found for user', userAddress: normalized });
       }
 
-      const gatewayBalance = await fetchGatewayBalanceForAddress(
-        existing.circleWalletAddress,
-      );
+      const gatewayBalance = await fetchGatewayBalanceForAddress(existing.address);
       const balance = Number(gatewayBalance.available || '0');
 
       return res.json({
         userAddress: normalized,
-        circleWalletId: existing.circleWalletId,
-        circleWalletAddress: existing.circleWalletAddress,
+        circleWalletId: existing.walletId,
+        circleWalletAddress: existing.address,
         gatewayBalance: balance,
         rawGatewayBalance: gatewayBalance,
       });
@@ -772,7 +771,7 @@ function createPublicApp(): express.Express {
     let payerAddress: Address;
     try {
       const normalized = getAddress(userAddressInput);
-      const circleWallet = getCircleWalletForUser(normalized);
+      const circleWallet = await getCircleWalletForUser(normalized);
       circleWalletId = circleWallet.walletId;
       // Use Circle wallet address as payer, not the user's EOA
       payerAddress = circleWallet.address as Address;
