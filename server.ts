@@ -731,10 +731,12 @@ function createPublicApp(): express.Express {
     const clearHeartbeat = () => {
       clearInterval(heartbeat);
     };
-    req.on('close', () => {
+    const handleStreamClosed = () => {
       clientClosed = true;
       clearHeartbeat();
-    });
+    };
+    req.on('aborted', handleStreamClosed);
+    res.on('close', handleStreamClosed);
 
     const sendEvent = (event: Record<string, unknown>) => {
       if (clientClosed || res.writableEnded) return;

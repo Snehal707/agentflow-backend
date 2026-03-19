@@ -239,6 +239,9 @@ export default function DashboardPage() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
+      let receivedEventCount = 0;
+      let sawTerminalEvent = false;
+      let activeStep: StepKey | undefined;
 
       const processLine = (line: string) => {
         const trimmed = line.trim();
@@ -259,12 +262,17 @@ export default function DashboardPage() {
               }
             | { type: "report"; markdown: string }
             | { type: "error"; message: string; step?: StepKey };
+          receivedEventCount += 1;
 
           switch (event.type) {
             case "step_start":
+              activeStep = event.step;
               updateStep(event.step, "running");
               break;
             case "step_complete":
+              if (activeStep === event.step) {
+                activeStep = undefined;
+              }
               updateStep(event.step, "complete", event.tx);
               trackEvent(`${event.step}_complete`, {
                 wallet_address: address,
@@ -281,6 +289,7 @@ export default function DashboardPage() {
               });
               break;
             case "report":
+              sawTerminalEvent = true;
               setReport(event.markdown);
               trackEvent("pipeline_complete", {
                 wallet_address: address,
@@ -288,8 +297,10 @@ export default function DashboardPage() {
               });
               break;
             case "error":
+              sawTerminalEvent = true;
               setError(event.message);
               if (event.step) {
+                activeStep = event.step;
                 updateStep(event.step, "error");
               }
               break;
@@ -301,13 +312,32 @@ export default function DashboardPage() {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += decoder.decode();
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           processLine(line);
         }
+      }
+
+      if (buffer.trim()) {
+        for (const line of buffer.split("\n")) {
+          processLine(line);
+        }
+      }
+
+      if (!sawTerminalEvent) {
+        const failure = new Error(
+          receivedEventCount === 0
+            ? "Pipeline stream closed before any updates were received. Redeploy the backend and check Railway logs."
+            : "Pipeline stopped before completion. Check Railway logs for the failing step.",
+        ) as StepFailure;
+        failure.step = activeStep;
+        throw failure;
       }
 
       await refetch();
