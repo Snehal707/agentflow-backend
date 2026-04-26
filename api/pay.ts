@@ -234,19 +234,29 @@ router.get('/name/my', authMiddleware, async (req, res) => {
     }
     const authAddr = getAddress(normalizeWallet(req));
     const ua = await getOrCreateUserAgentWallet(authAddr);
-    const n = await getOwnerRegisteredName(getAddress(ua.address as `0x${string}`));
-    let expiresAt: string | null = null;
-    if (n) {
-      const info = await getNameInfoOnChain(n);
-      if (info && Array.isArray(info) && info[2] !== undefined) {
-        expiresAt = new Date(Number(info[2] as bigint) * 1000).toISOString();
-      }
-    }
-    return res.json({ name: n ? `${n}.arc` : null, expiresAt });
+    const registered = await readRegisteredArcNameForOwner(
+      getAddress(ua.address as `0x${string}`),
+    );
+    return res.json(registered);
   } catch (e: any) {
     return res.status(500).json({ error: e?.message ?? 'my name failed' });
   }
 });
+
+async function readRegisteredArcNameForOwner(owner: `0x${string}`): Promise<{
+  name: string | null;
+  expiresAt: string | null;
+}> {
+  const n = await getOwnerRegisteredName(owner);
+  let expiresAt: string | null = null;
+  if (n) {
+    const info = await getNameInfoOnChain(n);
+    if (info && Array.isArray(info) && info[2] !== undefined) {
+      expiresAt = new Date(Number(info[2] as bigint) * 1000).toISOString();
+    }
+  }
+  return { name: n ? `${n}.arc` : null, expiresAt };
+}
 
 router.post('/name/renew', authMiddleware, async (req, res) => {
   try {
@@ -359,10 +369,18 @@ router.get('/context', authMiddleware, async (req, res) => {
     if (error) {
       return res.status(500).json({ error: error.message });
     }
+    const chainArc = getAgentPayRegistryAddress()
+      ? await readRegisteredArcNameForOwner(userAgentWalletAddress).catch(() => ({
+          name: null,
+          expiresAt: null,
+        }))
+      : { name: null, expiresAt: null };
     return res.json({
       walletAddress: w,
       userAgentWalletAddress,
       arc_handle: data?.arc_handle ? String(data.arc_handle) : null,
+      chain_arc_name: chainArc.name,
+      chain_arc_expires_at: chainArc.expiresAt,
     });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message ?? 'context failed' });
