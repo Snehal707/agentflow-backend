@@ -57,11 +57,18 @@ function startFrontend() {
     console.log("[dev:stack] frontend mode: next dev");
   }
 
+  // `next start` must see NODE_ENV=production so next.config.mjs uses distDir
+  // `.next`. If repo `.env` sets NODE_ENV=development, stable mode would still run
+  // `next start` but Next would look for a build in `.next-dev` and fail.
+  const feEnv = useDev
+    ? process.env
+    : { ...process.env, NODE_ENV: "production" };
+
   // shell: true avoids spawn EINVAL on Windows when invoking npm
   return spawn("npm", args, {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env,
+    env: feEnv,
     shell: true,
   });
 }
