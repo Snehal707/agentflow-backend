@@ -41,3 +41,19 @@ foundry/lib/openzeppelin-contracts/
 
 # Full Hermes checkout (nested .git) — keep local only; use submodule if you need it in clones
 /hermes-brain/
+
+# IDE / Cursor / agent skill mirrors / extension experiments (not part of shipped product)
+/.agents/
+/.cursor/
+/agentflow-extension/
+/cursorrules
+/BPLUS_THEME_SNIPPETS.md
+/DESIGN.md
+/DESIGN_HANDOFF_BPLUS.md
+/EXECUTION_CHECKLIST_BPLUS.md
+/GAP_CHECKLIST_BPLUS.md
+/GITHUB_ISSUES_BPLUS.md
+/IMPLEMENTATION_MATRIX_BPLUS.md
+/STRICT_GAP_CHECKLIST_PER_ROUTE.md
+/agentflow-v3-cursor-prompt.md
+/batch-test.csv
