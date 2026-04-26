@@ -119,6 +119,10 @@ import {
   resolveFacilitatorHealthUrl,
 } from './lib/x402Health';
 import { AGENT_DEFAULT_PORTS, isAgentHealthy } from './lib/a2a-health';
+import {
+  formatPaidPortfolioAgentChatBody,
+  formatPortfolioSnapshotRecordsForChat,
+} from './lib/format-portfolio-chat';
 type OrchestratorStep = 'research' | 'analyst' | 'writer';
 
 type ProxyEvent =
@@ -3443,7 +3447,7 @@ function summarizePortfolioA2aPayload(payload: Record<string, unknown>): string[
 
 function formatPortfolioA2aReport(
   payload: Record<string, unknown> | null,
-  buyerAgentSlug: PortfolioA2aBuyer,
+  _buyerAgentSlug: PortfolioA2aBuyer,
 ): string {
   if (!payload) {
     return 'Portfolio Agent did not return a report payload.';
@@ -3458,6 +3462,24 @@ function formatPortfolioA2aReport(
     (Array.isArray(payload.holdings) && payload.holdings.length > 0) ||
     (Array.isArray(payload.positions) && payload.positions.length > 0) ||
     Boolean(payload.pnl);
+
+  if (hasStructuredPortfolioData) {
+    const snapshotMd = formatPortfolioSnapshotRecordsForChat({
+      holdings: (payload.holdings as Array<Record<string, unknown>>) ?? [],
+      positions: (payload.positions as Array<Record<string, unknown>>) ?? [],
+      recentTransactions: (payload.recentTransactions as Array<Record<string, unknown>>) ?? [],
+      pnl:
+        payload.pnl && typeof payload.pnl === 'object'
+          ? (payload.pnl as Record<string, unknown>)
+          : payload.pnlSummary && typeof payload.pnlSummary === 'object'
+            ? (payload.pnlSummary as Record<string, unknown>)
+            : null,
+    });
+    if (report) {
+      return `${snapshotMd}\n\n## Analysis\n\n${stripSensitivePortfolioReport(report)}`.trim();
+    }
+    return snapshotMd.trim();
+  }
 
   if (report && !hasStructuredPortfolioData) {
     const safeReport = stripSensitivePortfolioReport(report);
@@ -9151,6 +9173,67 @@ function createPublicApp(): express.Express {
               directRoute.tool === 'bridge_usdc'
                 ? 'You selected EOA mode, which is the manual/funding wallet mode. DCW mode is the in-chat execution mode. AgentFlow bridge runs through the sponsored Bridge agent in DCW mode, so switch execution mode to DCW if you want me to do the bridge for you here.'
                 : 'You selected EOA mode, which is the manual/funding wallet mode. DCW mode is the in-chat execution mode for swap and vault actions. Switch execution mode to DCW if you want me to execute this for you in chat.';
+          } else if (
+            directRoute.tool === 'get_portfolio' &&
+            executionTarget === 'DCW' &&
+            walletCtx.walletAddress?.trim()
+          ) {
+            let usedPaidPortfolio = false;
+            try {
+              if (await isAgentHealthy('portfolio')) {
+                const paid = await runDcwPaidConfirm<Record<string, unknown>>({
+                  walletAddress: walletCtx.walletAddress.trim(),
+                  agent: 'portfolio',
+                  price: portfolioPrice,
+                  url: PORTFOLIO_URL,
+                  requestId: `portfolio_chat_${canonicalRedisSessionId(actionSessionId)}_${Date.now()}`,
+                });
+                const data = paid.data ?? {};
+                const errMsg = typeof data.error === 'string' ? data.error.trim() : '';
+                const failed =
+                  paid.status < 200 ||
+                  paid.status >= 300 ||
+                  data.success === false ||
+                  Boolean(errMsg);
+                if (!failed) {
+                  responseText = formatPaidPortfolioAgentChatBody(data, portfolioPrice);
+                  appendRecentExecutionEntries(actionSessionId, [
+                    {
+                      requestId: paid.payment.requestId,
+                      agent: 'portfolio',
+                      price: portfolioPrice,
+                      payer: paid.payment.payer,
+                      mode: 'dcw',
+                      transactionRef: paid.payment.transaction ?? null,
+                    },
+                  ]);
+                  meta = buildBrainMetaFromToolResults([
+                    { name: 'agentflow_portfolio', result: responseText },
+                  ]);
+                  const paymentMeta = takeRecentExecutionMeta(actionSessionId);
+                  if (paymentMeta) {
+                    meta.paymentMeta = paymentMeta;
+                  }
+                  usedPaidPortfolio = true;
+                }
+              }
+            } catch (err) {
+              console.warn(
+                '[chat/respond] paid portfolio direct route failed:',
+                getErrorMessage(err),
+              );
+            }
+            if (!usedPaidPortfolio) {
+              responseText = await executeTool(
+                directRoute.tool,
+                directRoute.args,
+                walletCtx,
+                actionSessionId,
+              );
+              meta = buildBrainMetaFromToolResults([
+                { name: directRoute.tool, result: responseText },
+              ]);
+            }
           } else {
             responseText = await executeTool(
               directRoute.tool,

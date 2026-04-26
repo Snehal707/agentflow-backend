@@ -10,6 +10,7 @@ import {
 } from 'viem';
 import { arcTestnet } from 'viem/chains';
 import { fetchGatewayBalancesForDepositors } from '../../lib/gateway-balance';
+import { formatPortfolioSnapshotRecordsForChat } from '../../lib/format-portfolio-chat';
 
 const ARC_USDC = getAddress('0x3600000000000000000000000000000000000000');
 const ARC_EURC = getAddress('0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a');
@@ -456,87 +457,18 @@ export function buildPortfolioQuickSummary(
   snapshot: PortfolioSnapshot,
   options: { postAction?: boolean } = {},
 ): string {
-  const shortNumber = (value: number): string =>
-    new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: value >= 100 ? 2 : 3,
-    }).format(value);
-  const holdings = snapshot.holdings.filter(
-    (holding) => Number(holding.usdValue ?? 0) > 0 || Number(holding.balanceFormatted ?? 0) > 0,
+  return formatPortfolioSnapshotRecordsForChat(
+    {
+      holdings: snapshot.holdings as unknown as Array<Record<string, unknown>>,
+      positions: snapshot.positions as unknown as Array<Record<string, unknown>>,
+      recentTransactions: snapshot.recentTransactions as unknown as Array<Record<string, unknown>>,
+      pnl: snapshot.pnlSummary as unknown as Record<string, unknown>,
+    },
+    {
+      title: options.postAction ? '## Portfolio after this action' : undefined,
+      maxLength: 2000,
+    },
   );
-  const positions = snapshot.positions.filter(
-    (position) => Number(position.usdValue ?? 0) > 0 || Number(position.amountFormatted ?? 0) > 0,
-  );
-
-  const tokenHoldings = holdings
-    .filter((holding) => holding.kind !== 'vault_share')
-    .sort((left, right) => Number(right.usdValue ?? 0) - Number(left.usdValue ?? 0))
-    .slice(0, 6)
-    .map((holding) => {
-      const balance = Number(holding.balanceFormatted);
-      const usdValue = Number(holding.usdValue ?? 0);
-      return usdValue > 0
-        ? `${shortNumber(balance)} ${holding.symbol} ($${shortNumber(usdValue)})`
-        : `${shortNumber(balance)} ${holding.symbol}`;
-    });
-
-  const vaultHoldings = holdings
-    .filter((holding) => holding.kind === 'vault_share')
-    .map((holding) => {
-      const balance = Number(holding.balanceFormatted);
-      const usdValue = Number(holding.usdValue ?? 0);
-      return usdValue > 0
-        ? `${shortNumber(balance)} ${holding.symbol} ($${shortNumber(usdValue)})`
-        : `${shortNumber(balance)} ${holding.symbol}`;
-    });
-
-  const gatewayPositions = positions
-    .filter((position) => position.kind === 'gateway_position')
-    .map((position) => {
-      const usdValue = Number(position.usdValue ?? 0);
-      return usdValue > 0
-        ? `${position.amountFormatted} ($${shortNumber(usdValue)})`
-        : position.amountFormatted;
-    });
-
-  const gatewayUsd = positions
-    .filter((position) => position.kind === 'gateway_position')
-    .reduce((sum, position) => sum + Number(position.usdValue ?? 0), 0);
-  const walletOnlyValue = Math.max(0, snapshot.pnlSummary.currentValueUsd - gatewayUsd);
-
-  const stableSymbols = new Set(['USDC', 'EURC', 'USDT', 'DAI', 'PYUSD', 'USDS', 'FRAX']);
-  const stablecoinHeavy =
-    tokenHoldings.length > 0 &&
-    holdings
-      .filter((holding) => holding.kind !== 'vault_share')
-      .every((holding) => stableSymbols.has(holding.symbol.toUpperCase()));
-
-  const lines = [options.postAction ? 'Portfolio after this action:' : 'Current portfolio:'];
-  lines.push(
-    tokenHoldings.length > 0
-      ? `- Wallet tokens: ${tokenHoldings.join(', ')}`
-      : '- Wallet tokens: none found.',
-  );
-  if (vaultHoldings.length > 0) {
-    lines.push(`- Vault: ${vaultHoldings.join(', ')}`);
-  }
-  if (gatewayPositions.length > 0) {
-    lines.push(`- Gateway reserve: ${gatewayPositions.join('; ')}`);
-  }
-  if (walletOnlyValue > 0) {
-    lines.push(`- Wallet value: $${shortNumber(walletOnlyValue)}`);
-  } else if (snapshot.pnlSummary.currentValueUsd > 0) {
-    lines.push(`- Total value: $${shortNumber(snapshot.pnlSummary.currentValueUsd)}`);
-  }
-  if (gatewayPositions.length > 0 && snapshot.pnlSummary.currentValueUsd > 0) {
-    lines.push(`- Total including Gateway: $${shortNumber(snapshot.pnlSummary.currentValueUsd)}`);
-  }
-  if (stablecoinHeavy) {
-    lines.push(
-      '- This is a stablecoin-heavy portfolio, so the main exposures here are payment liquidity, gateway reserve, and stablecoin balances rather than big market swings.',
-    );
-  }
-  return lines.join('\n');
 }
 
 function parsePortfolioAssessmentJson(response: string): Partial<PortfolioAssessment> {
