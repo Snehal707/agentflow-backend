@@ -504,8 +504,18 @@ function buildArcVsEthereumStats(
     Number.isFinite(ECONOMY_ETHEREUM_GAS_PER_TX_USD) && ECONOMY_ETHEREUM_GAS_PER_TX_USD > 0
       ? ECONOMY_ETHEREUM_GAS_PER_TX_USD
       : 2.5;
+  if (arcPerTx <= 0) {
+    return {
+      arc_gas_per_tx: 'Awaiting gas data',
+      ethereum_gas_per_tx: formatUsdMicro(ethPerTx, 2),
+      savings_multiplier: 'n/a',
+      min_viable_payment_arc: 'Awaiting gas data',
+      min_viable_payment_eth: `${formatUsdMicro(ethPerTx, 2)}+`,
+    };
+  }
+
   const savingsMultiplier =
-    arcPerTx > 0 && Number.isFinite(ethPerTx) ? ethPerTx / arcPerTx : 0;
+    Number.isFinite(ethPerTx) ? ethPerTx / arcPerTx : 0;
 
   return {
     arc_gas_per_tx: formatUsdMicro(arcPerTx),
